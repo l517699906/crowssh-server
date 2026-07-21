@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 智能体对话台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%2322c55e'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cpath fill='white' d='M32 10 49 19v18L32 54 15 37V19l17-9Zm0 7-11 6v13l11 6 11-6V23l-11-6Zm0 6 6 3v7l-6 3-6-3v-7l6-3Z'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07101d;
+      --panel: rgba(14, 21, 38, 0.82);
+      --panel-2: rgba(9, 15, 28, 0.9);
+      --border: rgba(148, 163, 184, 0.16);
+      --border-2: rgba(148, 163, 184, 0.22);
+      --text: #e5eef8;
+      --muted: #94a3b8;
+      --brand: #38bdf8;
+      --brand-2: #22c55e;
+      --warn: #f59e0b;
+      --danger: #f87171;
+      --shadow: 0 32px 80px rgba(2, 8, 23, 0.5);
+      --radius: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      min-height: 100%;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.12), transparent 26%),
+        linear-gradient(135deg, #040812 0%, #08111e 42%, #0b1425 100%);
+      color: var(--text);
+    }
+
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .workspace {
+      width: 100vw;
+      height: 100vh;
+      padding: 18px;
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr) 320px;
+      gap: 16px;
+    }
+
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .sidebar,
+    .assistant {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar header,
+    .assistant header,
+    .composer {
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar .section,
+    .assistant .section {
+      padding: 18px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .hero-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      width: 44px;
+      height: 44px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, rgba(56, 189, 248, 0.9), rgba(34, 197, 94, 0.82));
+      box-shadow: 0 12px 24px rgba(56, 189, 248, 0.18);
+      flex: none;
+    }
+
+    .logo svg {
+      width: 24px;
+      height: 24px;
+      fill: white;
+    }
+
+    h1, h2, h3, p {
+      margin: 0;
+    }
+
+    .hero-title h1 {
+      font-size: 19px;
+      line-height: 1.2;
+    }
+
+    .hero-title p {
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .meta-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.12);
+      color: #7dd3fc;
+      font-size: 12px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .stat {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(2, 8, 23, 0.48);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      min-width: 0;
+    }
+
+    .stat .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .stat .value {
+      font-size: 14px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .agent-list {
+      display: grid;
+      gap: 10px;
+      max-height: 238px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .agent-option {
+      width: 100%;
+      text-align: left;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(2, 8, 23, 0.46);
+      color: var(--text);
+      border-radius: 18px;
+      padding: 14px 14px 13px;
+      cursor: pointer;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    }
+
+    .agent-option:hover,
+    .agent-option.active {
+      border-color: rgba(56, 189, 248, 0.6);
+      background: rgba(56, 189, 248, 0.12);
+      transform: translateY(-1px);
+    }
+
+    .agent-option strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .agent-option span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.12);
+      color: #d4e3f2;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .selector,
+    .input,
+    .textarea {
+      width: 100%;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 16px;
+      background: rgba(2, 8, 23, 0.54);
+      color: var(--text);
+      outline: none;
+      transition: border-color .18s ease, box-shadow .18s ease;
+      font: inherit;
+    }
+
+    .selector {
+      padding: 14px 14px;
+      appearance: none;
+    }
+
+    .input {
+      padding: 14px 14px;
+    }
+
+    .textarea {
+      min-height: 104px;
+      resize: vertical;
+      padding: 14px 14px;
+      line-height: 1.6;
+    }
+
+    .selector:focus,
+    .input:focus,
+    .textarea:focus {
+      border-color: rgba(56, 189, 248, 0.72);
+      box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
+    }
+
+    .main {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-width: 0;
+    }
+
+    .main header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .title-block {
+      min-width: 0;
+    }
+
+    .title-block h2 {
+      font-size: 22px;
+      line-height: 1.2;
+      margin-bottom: 8px;
+    }
+
+    .title-block p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      line-height: 1;
+      white-space: nowrap;
+      background: rgba(148, 163, 184, 0.12);
+      color: #dbe7f3;
+    }
+
+    .status[data-tone="success"] { background: rgba(34, 197, 94, 0.15); color: #86efac; }
+    .status[data-tone="busy"] { background: rgba(56, 189, 248, 0.14); color: #7dd3fc; }
+    .status[data-tone="error"] { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
+
+    .message-list {
+      padding: 20px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-width: 0;
+      background:
+        radial-gradient(circle at top right, rgba(56, 189, 248, 0.06), transparent 26%),
+        linear-gradient(180deg, rgba(8, 15, 28, 0.14), rgba(8, 15, 28, 0.02));
+    }
+
+    .message {
+      max-width: min(86%, 820px);
+      min-width: 220px;
+      border-radius: 20px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      padding: 14px 15px 13px;
+      background: rgba(2, 8, 23, 0.54);
+      box-shadow: 0 12px 24px rgba(2, 8, 23, 0.18);
+    }
+
+    .message-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+
+    .message-role {
+      color: #cfe3f7;
+      font-weight: 700;
+    }
+
+    .message-time {
+      color: var(--muted);
+      flex: none;
+    }
+
+    .message-body {
+      font-size: 14px;
+      line-height: 1.75;
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    .message-user {
+      align-self: flex-start;
+      border-color: rgba(56, 189, 248, 0.22);
+      background: linear-gradient(180deg, rgba(8, 19, 35, 0.86), rgba(2, 8, 23, 0.68));
+    }
+
+    .message-agent {
+      align-self: flex-end;
+      border-color: rgba(34, 197, 94, 0.22);
+      background: linear-gradient(180deg, rgba(7, 20, 26, 0.86), rgba(2, 8, 23, 0.68));
+    }
+
+    .quick-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 20px 18px;
+    }
+
+    .quick-btn {
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(148, 163, 184, 0.12);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .composer {
+      padding: 18px;
+      border-bottom: 0;
+      border-top: 1px solid var(--border);
+      display: grid;
+      gap: 12px;
+    }
+
+    .composer-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
+      gap: 12px;
+    }
+
+    .composer-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 16px;
+      padding: 13px 16px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .btn-primary {
+      color: #04111f;
+      background: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 45%, #22c55e 100%);
+    }
+
+    .btn-secondary {
+      color: var(--text);
+      background: rgba(148, 163, 184, 0.12);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+
+    .btn:disabled {
+      opacity: 0.62;
+      cursor: not-allowed;
+    }
+
+    .error-banner {
+      margin: 0 20px 18px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(248, 113, 113, 0.14);
+      border: 1px solid rgba(248, 113, 113, 0.2);
+      color: #fecaca;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .stack label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .stack .helper {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .sidebar-bottom {
+      padding: 18px;
+      border-top: 1px solid var(--border);
+      margin-top: auto;
+      display: grid;
+      gap: 12px;
+    }
+
+    .desc-box {
+      color: #c7d4e2;
+      line-height: 1.75;
+      font-size: 13px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(2, 8, 23, 0.42);
+      min-height: 94px;
+    }
+
+    .split-info {
+      display: grid;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .split-info strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .scrollbar::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    .scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.28);
+      border-radius: 999px;
+    }
+
+    .scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    @media (max-width: 1200px) {
+      body {
+        overflow: auto;
+      }
+
+      .workspace {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+      }
+
+      .panel {
+        min-height: 320px;
+      }
+
+      .main {
+        min-height: 60vh;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .workspace {
+        padding: 12px;
+        gap: 12px;
+      }
+
+      .main header,
+      .composer,
+      .sidebar header,
+      .assistant header,
+      .sidebar .section,
+      .assistant .section,
+      .sidebar-bottom {
+        padding: 14px;
+      }
+
+      .composer-top {
+        grid-template-columns: 1fr;
+      }
+
+      .message {
+        max-width: 100%;
+      }
+
+      .title-block h2 {
+        font-size: 19px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="workspace">
+    <aside class="panel sidebar">
+      <header>
+        <div class="hero-title">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Zm0 3.1-5.7 3v6.8L12 18.4l5.7-3V8.6L12 5.6Zm0 2.7 3.3 1.8v3.7L12 15.6l-3.3-1.8V10l3.3-1.7Z"/>
+            </svg>
+          </div>
+          <div>
+            <h1>AI 智能体对话台</h1>
+            <p id="welcomeText">正在校验登录状态。</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="section">
+        <div class="toolbar" style="justify-content: space-between;">
+          <span class="meta-badge" id="loginBadge">用户未登录</span>
+          <button class="btn btn-secondary" id="logoutBtn" type="button">退出</button>
+        </div>
+      </div>
+
+      <div class="section stack">
+        <label for="agentSelect">智能体选择</label>
+        <select id="agentSelect" class="selector">
+          <option value="">加载中...</option>
+        </select>
+        <div class="helper" id="agentHint">正在请求智能体列表。</div>
+      </div>
+
+      <div class="section">
+        <div class="stat-grid">
+          <div class="stat">
+            <div class="label">当前用户</div>
+            <div class="value" id="userText">-</div>
+          </div>
+          <div class="stat">
+            <div class="label">当前会话</div>
+            <div class="value" id="sessionId">未创建</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="split-info">
+          <div><strong>会话策略</strong>：每次发送消息前都会调用 `createSession`。</div>
+          <div><strong>返回展示</strong>：用户消息在左，智能体回复在右。</div>
+        </div>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="desc-box" id="agentDesc">请选择一个智能体，左侧会展示它的描述和状态。</div>
+        <div class="toolbar">
+          <button class="btn btn-secondary" id="newSessionBtn" type="button">新建会话</button>
+          <button class="btn btn-secondary" id="refreshBtn" type="button">刷新智能体</button>
+        </div>
+        <div class="helper" id="sessionMeta">发送消息时将自动创建</div>
+      </div>
+    </aside>
+
+    <section class="panel main">
+      <header>
+        <div class="title-block">
+          <h2>对话工作区</h2>
+          <p>输入消息并发送，系统会先创建会话，再调用智能体回复接口。</p>
+        </div>
+        <div class="status" id="statusPill" data-tone="idle">就绪</div>
+      </header>
+
+      <div class="quick-bar">
+        <button class="quick-btn" data-quick="你好，介绍一下你的能力">能力介绍</button>
+        <button class="quick-btn" data-quick="帮我总结一下这个项目的亮点">项目总结</button>
+        <button class="quick-btn" data-quick="根据当前页面，给我优化建议">优化建议</button>
+      </div>
+
+      <div class="message-list scrollbar" id="messageList" aria-live="polite"></div>
+
+      <div class="error-banner" id="errorBanner" hidden></div>
+
+      <div class="composer">
+        <div class="composer-top">
+          <textarea id="messageInput" class="textarea" placeholder="请输入你的问题，按 Enter 发送，Shift+Enter 换行。"></textarea>
+          <div class="stack">
+            <label for="sessionMetaInput">会话状态</label>
+            <input id="sessionMetaInput" class="input" type="text" value="发送时自动创建会话" readonly>
+            <label for="apiBaseInput">接口根地址</label>
+            <input id="apiBaseInput" class="input" type="text" value="http://127.0.0.1:8091" readonly>
+          </div>
+        </div>
+        <div class="composer-actions">
+          <button class="btn btn-primary" id="sendBtn" type="button">发送</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel assistant">
+      <header>
+        <div class="hero-title">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Zm0 3.1-5.7 3v6.8L12 18.4l5.7-3V8.6L12 5.6Zm0 2.7 3.3 1.8v3.7L12 15.6l-3.3-1.8V10l3.3-1.7Z"/>
+            </svg>
+          </div>
+          <div>
+            <h1>状态面板</h1>
+            <p>展示当前登录与接口状态。</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="section">
+        <div class="stat-grid" style="grid-template-columns:1fr;">
+          <div class="stat">
+            <div class="label">登录信息</div>
+            <div class="value" id="loginInfoText">等待校验...</div>
+          </div>
+          <div class="stat">
+            <div class="label">当前 API</div>
+            <div class="value">queryAiAgentConfigList / createSession / chat</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="split-info">
+          <div><strong>布局</strong>：三栏铺满全屏，适合桌面端扫描与连续对话。</div>
+          <div><strong>登录联动</strong>：未登录会自动跳回登录页。</div>
+          <div><strong>展示方式</strong>：对话气泡区可持续滚动。</div>
+        </div>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="toolbar">
+          <span class="chip">API_BASE：http://127.0.0.1:8091</span>
+          <span class="chip">cookie：ai_agent_login</span>
+        </div>
+        <div class="helper">右侧面板会跟随当前登录与请求状态更新。</div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/auth.js"></script>
+  <script src="./js/chat.js"></script>
+  <script>
+    if (window.AIChatPage) {
+      window.AIChatPage.init();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>AI 智能体登录</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%2322c55e'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cpath fill='white' d='M32 10 49 19v18L32 54 15 37V19l17-9Zm0 7-11 6v13l11 6 11-6V23l-11-6Zm0 6 6 3v7l-6 3-6-3v-7l6-3Z'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08111f;
+      --bg-2: #0c1629;
+      --panel: rgba(15, 23, 42, 0.72);
+      --panel-border: rgba(148, 163, 184, 0.18);
+      --text: #e5eef8;
+      --muted: #94a3b8;
+      --line: rgba(148, 163, 184, 0.28);
+      --brand: #38bdf8;
+      --brand-2: #22c55e;
+      --accent: #f59e0b;
+      --danger: #f87171;
+      --shadow: 0 32px 80px rgba(2, 8, 23, 0.45);
+      --radius: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      min-height: 100%;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.14), transparent 30%),
+        linear-gradient(135deg, #050b16 0%, #091421 40%, #0d1729 100%);
+      color: var(--text);
+    }
+
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(380px, 0.8fr);
+      gap: 0;
+      padding: 28px;
+    }
+
+    .hero,
+    .auth {
+      min-width: 0;
+      border: 1px solid var(--panel-border);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .hero {
+      position: relative;
+      background:
+        linear-gradient(180deg, rgba(12, 22, 41, 0.88), rgba(4, 9, 20, 0.96)),
+        radial-gradient(circle at 18% 18%, rgba(56, 189, 248, 0.16), transparent 28%);
+      border-radius: var(--radius) 0 0 var(--radius);
+      padding: 52px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .hero::before,
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto;
+      border-radius: 999px;
+      filter: blur(10px);
+      pointer-events: none;
+    }
+
+    .hero::before {
+      width: 280px;
+      height: 280px;
+      right: -90px;
+      top: 72px;
+      background: rgba(56, 189, 248, 0.1);
+    }
+
+    .hero::after {
+      width: 220px;
+      height: 220px;
+      left: -80px;
+      bottom: 100px;
+      background: rgba(34, 197, 94, 0.08);
+    }
+
+    .brand {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-mark {
+      width: 52px;
+      height: 52px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(56, 189, 248, 0.92), rgba(34, 197, 94, 0.82));
+      display: grid;
+      place-items: center;
+      box-shadow: 0 14px 28px rgba(56, 189, 248, 0.24);
+    }
+
+    .brand-mark svg {
+      width: 28px;
+      height: 28px;
+      fill: #ffffff;
+    }
+
+    .brand-text h1 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .brand-text p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .hero-copy {
+      position: relative;
+      z-index: 1;
+      max-width: 560px;
+    }
+
+    .hero-copy h2 {
+      margin: 0 0 16px;
+      font-size: 54px;
+      line-height: 1.05;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .hero-copy p {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.75;
+      color: #bfd0e0;
+      max-width: 52ch;
+    }
+
+    .feature-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .feature {
+      min-width: 0;
+      padding: 18px 18px 16px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 18px;
+      background: rgba(7, 13, 24, 0.56);
+      backdrop-filter: blur(10px);
+    }
+
+    .feature strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+
+    .feature span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .hero-visual {
+      position: relative;
+      z-index: 1;
+      margin-top: auto;
+      border-radius: 28px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(2, 8, 23, 0.52);
+      padding: 18px;
+    }
+
+    .hero-visual img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 22px;
+    }
+
+    .auth {
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background:
+        linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(8, 15, 28, 0.98)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+    }
+
+    .auth-card {
+      width: min(100%, 440px);
+      border-radius: 28px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(10, 18, 34, 0.88);
+      backdrop-filter: blur(16px);
+      padding: 34px;
+    }
+
+    .auth-card .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.12);
+      color: #7dd3fc;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .auth-card h2 {
+      margin: 18px 0 8px;
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .auth-card p {
+      margin: 0 0 24px;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .demo-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+
+    .demo-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.12);
+      color: #cbd5e1;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .field {
+      margin-bottom: 16px;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+
+    .input {
+      width: 100%;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      border-radius: 16px;
+      background: rgba(2, 8, 23, 0.62);
+      color: var(--text);
+      outline: none;
+      padding: 15px 16px;
+      font-size: 15px;
+      transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+    }
+
+    .input::placeholder {
+      color: #64748b;
+    }
+
+    .input:focus {
+      border-color: rgba(56, 189, 248, 0.72);
+      box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
+    }
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 4px 0 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .remember {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .remember input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--brand);
+    }
+
+    .link {
+      color: #7dd3fc;
+      text-decoration: none;
+    }
+
+    .link:hover {
+      text-decoration: underline;
+    }
+
+    .submit {
+      width: 100%;
+      border: 0;
+      border-radius: 16px;
+      padding: 15px 18px;
+      cursor: pointer;
+      color: #04111f;
+      font-weight: 700;
+      font-size: 15px;
+      background: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 45%, #22c55e 100%);
+      box-shadow: 0 18px 30px rgba(56, 189, 248, 0.2);
+      transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+    }
+
+    .submit:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 22px 34px rgba(56, 189, 248, 0.24);
+    }
+
+    .submit:active {
+      transform: translateY(0);
+      opacity: 0.96;
+    }
+
+    .error {
+      min-height: 22px;
+      margin-top: 14px;
+      color: #fca5a5;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.6;
+      text-align: center;
+    }
+
+    @media (max-width: 1080px) {
+      body {
+        overflow: auto;
+      }
+
+      .shell {
+        grid-template-columns: 1fr;
+        padding: 18px;
+      }
+
+      .hero {
+        border-radius: 24px 24px 0 0;
+        padding: 28px;
+      }
+
+      .auth {
+        border-radius: 0 0 24px 24px;
+      }
+
+      .hero-copy h2 {
+        font-size: clamp(34px, 7vw, 54px);
+      }
+
+      .feature-list {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .shell {
+        padding: 12px;
+      }
+
+      .hero,
+      .auth-card {
+        padding: 20px;
+      }
+
+      .hero-copy p {
+        font-size: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Zm0 3.1-5.7 3v6.8L12 18.4l5.7-3V8.6L12 5.6Zm0 2.7 3.3 1.8v3.7L12 15.6l-3.3-1.8V10l3.3-1.7Z"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>AI 智能体控制台</h1>
+          <p>登录后进入统一会话入口，管理你的智能体对话体验。</p>
+        </div>
+      </div>
+
+      <div class="hero-copy">
+        <h2>为智能对话，准备一个干净的入口。</h2>
+        <p>左侧展示产品信息与 AI 效果图，右侧保留简洁登录区。默认账号是 <strong>admin / admin</strong>，适合本地演示和 Nginx 静态页联调。</p>
+
+        <div class="feature-list">
+          <div class="feature">
+            <strong>统一登录态</strong>
+            <span>登录成功后写入 cookie，后续页面可直接读取。</span>
+          </div>
+          <div class="feature">
+            <strong>轻量演示</strong>
+            <span>无需额外框架，打开静态页即可体验完整流程。</span>
+          </div>
+          <div class="feature">
+            <strong>后续扩展</strong>
+            <span>可直接衔接对话页与后端 API 配置。</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-visual">
+        <img src="./images/ai-hero.svg" alt="AI 智能体效果图">
+      </div>
+    </section>
+
+    <section class="auth" aria-label="登录信息">
+      <div class="auth-card">
+        <div class="eyebrow">Login Portal</div>
+        <h2>欢迎回来</h2>
+        <p>请输入你的账号密码。默认演示账号为 <strong>admin</strong>，密码也是 <strong>admin</strong>。</p>
+
+        <div class="demo-row" aria-label="默认凭据">
+          <span class="demo-chip">账号：admin</span>
+          <span class="demo-chip">密码：admin</span>
+        </div>
+
+        <form id="loginForm" novalidate>
+          <div class="field">
+            <label for="username">账号</label>
+            <input class="input" id="username" name="username" type="text" placeholder="请输入账号" autocomplete="username" value="admin">
+          </div>
+          <div class="field">
+            <label for="password">密码</label>
+            <input class="input" id="password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" value="admin">
+          </div>
+
+          <div class="meta-row">
+            <label class="remember">
+              <input id="remember" type="checkbox" checked>
+              记住登录状态
+            </label>
+        <button class="link" type="button" id="resetDemo" style="background:none;border:0;padding:0;font:inherit;cursor:pointer;">恢复默认</button>
+          </div>
+
+          <button class="submit" type="submit">登录进入</button>
+          <div class="error" id="errorText" aria-live="polite"></div>
+        </form>
+
+        <div class="footer-note">
+          登录成功后会保存 <code>ai_agent_login</code> cookie，并跳转到 <code>index.html</code>。
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/auth.js"></script>
+  <script>
+    (function () {
+      const loginForm = document.getElementById('loginForm');
+      const usernameInput = document.getElementById('username');
+      const passwordInput = document.getElementById('password');
+      const rememberInput = document.getElementById('remember');
+      const errorText = document.getElementById('errorText');
+      const resetDemo = document.getElementById('resetDemo');
+
+      function redirectIfLoggedIn() {
+        if (window.AIAuth && window.AIAuth.getLoginState()) {
+          window.location.replace('./index.html');
+        }
+      }
+
+      function showError(message) {
+        errorText.textContent = message;
+      }
+
+      function clearError() {
+        errorText.textContent = '';
+      }
+
+      function normalize(value) {
+        return String(value || '').trim();
+      }
+
+      resetDemo.addEventListener('click', function (event) {
+        event.preventDefault();
+        usernameInput.value = 'admin';
+        passwordInput.value = 'admin';
+        clearError();
+        usernameInput.focus();
+      });
+
+      loginForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        const username = normalize(usernameInput.value);
+        const password = normalize(passwordInput.value);
+
+        if (!username || !password) {
+          showError('请输入账号和密码。');
+          return;
+        }
+
+        if (username !== 'admin' || password !== 'admin') {
+          showError('账号或密码不正确，默认演示账号是 admin / admin。');
+          return;
+        }
+
+        if (window.AIAuth) {
+          window.AIAuth.saveLoginState(username);
+        }
+
+        if (!rememberInput.checked) {
+          const expires = new Date(Date.now() + 30 * 1000).toUTCString();
+          document.cookie = `ai_agent_login=${encodeURIComponent(JSON.stringify({ user: username, ts: Date.now() }))}; expires=${expires}; path=/; SameSite=Lax`;
+        }
+
+        clearError();
+        window.location.href = './index.html';
+      });
+
+      [usernameInput, passwordInput].forEach(function (input) {
+        input.addEventListener('input', clearError);
+      });
+
+      redirectIfLoggedIn();
+    })();
+  </script>
+</body>
+</html>
