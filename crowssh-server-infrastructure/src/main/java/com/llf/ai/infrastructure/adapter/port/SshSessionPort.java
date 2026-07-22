@@ -1,21 +1,21 @@
 package com.llf.ai.infrastructure.adapter.port;
 
-import com.jcraft.jsch.JSch;
-import com.jcraft.jsch.JSchException;
-import com.jcraft.jsch.Session;
 import com.llf.ai.domain.ssh.adapter.port.ISshSessionPort;
 import lombok.extern.slf4j.Slf4j;
+import net.schmizz.sshj.SSHClient;
+import net.schmizz.sshj.transport.verification.PromiscuousVerifier;
+import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
 public class SshSessionPort implements ISshSessionPort {
 
-    // 会话缓存：connectionId -> Session
-    private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
-    private final JSch jsch = new JSch();
+    // 会话缓存：connectionId -> SSHClient
+    private final ConcurrentHashMap<String, SSHClient> sessions = new ConcurrentHashMap<>();
 
     @Override
     public boolean connect(String connectionId, String host, int port, String username,
@@ -23,31 +23,36 @@ public class SshSessionPort implements ISshSessionPort {
         // 如果已连接，先断开旧连接
         disconnect(connectionId);
 
-        try {
-            // 1. 创建会话
-            Session session = jsch.getSession(username, host, port);
-            session.setConfig("StrictHostKeyChecking", "no");
-            session.setTimeout(30000); // 30秒超时
+        if ((privateKey == null || privateKey.isEmpty())
+                && (password == null || password.isEmpty())) {
+            log.error("SSH连接失败：未提供认证信息 connectionId={}", connectionId);
+            return false;
+        }
 
-            // 2. 设置认证方式
+        SSHClient sshClient = new SSHClient();
+        try {
+            // 忽略主机密钥检查
+            sshClient.addHostKeyVerifier(new PromiscuousVerifier());
+            sshClient.setConnectTimeout(30000);
+            sshClient.setTimeout(30000);
+            sshClient.connect(host, port);
+
+            // 认证
             if (privateKey != null && !privateKey.isEmpty()) {
-                // 私钥认证
-                jsch.addIdentity(connectionId, privateKey.getBytes(), null, null);
-            } else if (password != null && !password.isEmpty()) {
-                // 密码认证
-                session.setPassword(password);
+                OpenSSHKeyFile keyFile = new OpenSSHKeyFile();
+                keyFile.init(privateKey, null, null);
+                sshClient.authPublickey(username, keyFile);
             } else {
-                log.error("SSH连接失败：未提供认证信息 connectionId={}", connectionId);
-                return false;
+                sshClient.authPassword(username, password);
             }
 
-            // 3. 建立连接
-            session.connect();
-            sessions.put(connectionId, session);
+            // 保存会话
+            sessions.put(connectionId, sshClient);
             log.info("SSH连接成功 connectionId={} host={}:{} user={}",
                     connectionId, host, port, username);
             return true;
-        } catch (JSchException e) {
+        } catch (IOException | RuntimeException e) {
+            closeQuietly(sshClient);
             log.error("SSH连接失败 connectionId={} host={}:{} error={}",
                     connectionId, host, port, e.getMessage());
             return false;
@@ -56,16 +61,24 @@ public class SshSessionPort implements ISshSessionPort {
 
     @Override
     public void disconnect(String connectionId) {
-        Session session = sessions.remove(connectionId);
-        if (session != null && session.isConnected()) {
-            session.disconnect();
+        SSHClient sshClient = sessions.remove(connectionId);
+        if (sshClient != null) {
+            closeQuietly(sshClient);
             log.info("SSH连接已断开 connectionId={}", connectionId);
         }
     }
 
     @Override
     public boolean isConnected(String connectionId) {
-        Session session = sessions.get(connectionId);
-        return session != null && session.isConnected();
+        SSHClient sshClient = sessions.get(connectionId);
+        return sshClient != null && sshClient.isConnected() && sshClient.isAuthenticated();
+    }
+
+    private void closeQuietly(SSHClient sshClient) {
+        try {
+            sshClient.disconnect();
+        } catch (IOException e) {
+            log.warn("关闭SSH连接失败 error={}", e.getMessage());
+        }
     }
 }

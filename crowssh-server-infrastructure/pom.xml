@@ -11,8 +11,8 @@
 
     <dependencies>
         <dependency>
-            <groupId>org.mybatis.spring.boot</groupId>
-            <artifactId>mybatis-spring-boot-starter</artifactId>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
 
         <dependency>
@@ -27,9 +27,9 @@
         </dependency>
 
         <dependency>
-            <groupId>com.jcraft</groupId>
-            <artifactId>jsch</artifactId>
-            <version>0.1.54</version>
+            <groupId>com.hierynomus</groupId>
+            <artifactId>sshj</artifactId>
+            <version>0.39.0</version>
         </dependency>
     </dependencies>
 

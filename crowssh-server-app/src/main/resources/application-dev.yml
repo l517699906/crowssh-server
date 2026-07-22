@@ -21,8 +21,8 @@ spring:
 #      - classpath:agent/parallel_research_app.yml
   datasource:
     username: root
-    password: 123456
-    url: jdbc:mysql://127.0.0.1:3306/xfg_frame_archetype?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true
+    password:
+    url: jdbc:mysql://127.0.0.1:3306/crowssh?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true
     driver-class-name: com.mysql.cj.jdbc.Driver
   hikari:
     pool-name: Retail_HikariCP
@@ -35,10 +35,10 @@ spring:
     connection-test-query: SELECT 1
   type: com.zaxxer.hikari.HikariDataSource
 
-# MyBatis 配置【如需使用记得打开】
-#mybatis:
-#  mapper-locations: classpath:/mybatis/mapper/*.xml
-#  config-location:  classpath:/mybatis/config/mybatis-config.xml
+# MyBatis-Plus 配置【如需使用记得打开】
+mybatis-plus:
+  mapper-locations: classpath:/mybatis/mapper/*.xml
+  config-location:  classpath:/mybatis/config/mybatis-config.xml
 
 # 日志
 logging:

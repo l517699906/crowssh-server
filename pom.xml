@@ -45,9 +45,9 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>org.mybatis.spring.boot</groupId>
-        <artifactId>mybatis-spring-boot-starter</artifactId>
-        <version>3.0.4</version>
+        <groupId>com.baomidou</groupId>
+        <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        <version>3.5.17</version>
       </dependency>
       <!-- # 多数据源路由配置
                  # mysql 5.x driver-class-name: com.mysql.jdbc.Driver    mysql-connector-java 5.1.34

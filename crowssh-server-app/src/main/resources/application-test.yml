@@ -30,7 +30,7 @@ thread:
 #    connection-test-query: SELECT 1
 #  type: com.zaxxer.hikari.HikariDataSource
 
-#mybatis:
+#mybatis-plus:
 #  mapper-locations: classpath:/mybatis/mapper/*.xml
 #  config-location:  classpath:/mybatis/config/mybatis-config.xml
 
