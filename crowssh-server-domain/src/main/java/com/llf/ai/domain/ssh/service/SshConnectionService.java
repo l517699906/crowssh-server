@@ -30,24 +30,24 @@ public class SshConnectionService implements ISshConnectionDomainService{
 
     @Override
     public void createConnection(SshConnectionEntity entity, SshConnectionConfigEntity configEntity) {
-        // 1. 校验必填字段
-        entity.validate();
-
-        // 2. 生成连接ID
-        if (entity.getConnectionId() == null || entity.getConnectionId().isBlank()) {
-            entity.setConnectionId(UUID.randomUUID().toString().replace("-", ""));
-        }
-
-        // 3. 设置默认值
-        entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
+        // 1. 设置默认值
         if (entity.getPort() == null) {
             entity.setPort(22);
         }
+        entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
         if (entity.getEncrypted() == null) {
             entity.setEncrypted(1);
         }
         if (entity.getUserId() == null || entity.getUserId().isBlank()) {
             entity.setUserId("default");
+        }
+
+        // 2. 校验必填字段
+        entity.validate();
+
+        // 3. 生成连接ID
+        if (entity.getConnectionId() == null || entity.getConnectionId().isBlank()) {
+            entity.setConnectionId(UUID.randomUUID().toString().replace("-", ""));
         }
 
         // 4. 保存连接
@@ -92,6 +92,7 @@ public class SshConnectionService implements ISshConnectionDomainService{
         // 5. 更新高级配置
         if (configEntity != null) {
             configEntity.setConnectionId(entity.getConnectionId());
+            mergeMissingConfig(configEntity, repository.queryConnectionConfigById(entity.getConnectionId()));
             repository.saveConnectionConfig(configEntity);
         }
 
@@ -103,6 +104,7 @@ public class SshConnectionService implements ISshConnectionDomainService{
         if (connectionId == null || connectionId.isBlank()) {
             throw new IllegalArgumentException("连接ID不能为空");
         }
+        sshSessionService.disconnect(connectionId);
         repository.deleteConnection(connectionId);
         log.info("SSH连接删除成功 connectionId={}", connectionId);
     }
@@ -166,5 +168,30 @@ public class SshConnectionService implements ISshConnectionDomainService{
     @Override
     public boolean isConnected(String connectionId) {
         return sshSessionService.isConnected(connectionId);
+    }
+
+    private void mergeMissingConfig(SshConnectionConfigEntity target, SshConnectionConfigEntity existing) {
+        if (existing == null) {
+            target.withDefaults();
+            return;
+        }
+        if (target.getConnectTimeout() == null) {
+            target.setConnectTimeout(existing.getConnectTimeout());
+        }
+        if (target.getKeepaliveInterval() == null) {
+            target.setKeepaliveInterval(existing.getKeepaliveInterval());
+        }
+        if (target.getStartupCommand() == null) {
+            target.setStartupCommand(existing.getStartupCommand());
+        }
+        if (target.getCompression() == null) {
+            target.setCompression(existing.getCompression());
+        }
+        if (target.getStrictHostKeyCheck() == null) {
+            target.setStrictHostKeyCheck(existing.getStrictHostKeyCheck());
+        }
+        if (target.getKnownHosts() == null) {
+            target.setKnownHosts(existing.getKnownHosts());
+        }
     }
 }

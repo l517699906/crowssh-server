@@ -148,6 +148,6 @@ public class AgentServiceController implements IAgentService {
             log.error("流式对话失败", e);
             emitter.completeWithError(e);
         }
-        return null;
+        return emitter;
     }
 }

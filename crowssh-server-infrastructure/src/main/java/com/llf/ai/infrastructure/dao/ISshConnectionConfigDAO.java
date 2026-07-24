@@ -46,4 +46,15 @@ public interface ISshConnectionConfigDAO extends BaseMapper<SshConnectionConfigP
         return selectOne(Wrappers.<SshConnectionConfigPO>lambdaQuery()
                 .eq(SshConnectionConfigPO::getConnectionId, connectionId));
     }
+
+    /**
+     * 删除连接对应的高级配置。
+     *
+     * @param connectionId 连接唯一标识
+     * @return 影响行数
+     */
+    default int deleteByConnectionId(String connectionId) {
+        return delete(Wrappers.<SshConnectionConfigPO>lambdaQuery()
+                .eq(SshConnectionConfigPO::getConnectionId, connectionId));
+    }
 }
