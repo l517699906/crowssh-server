@@ -11,6 +11,7 @@ import com.llf.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.llf.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigProperties;
 import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
+import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
 import com.llf.ai.types.enums.ResponseCode;
 import com.llf.ai.types.exception.AppException;
 import io.reactivex.rxjava3.core.Flowable;
@@ -114,6 +115,27 @@ public class ChatService implements IChatService {
         InMemoryRunner runner = aiAgentRegisterVO.getRunner();
 
         Content userMsg = Content.fromParts(Part.fromText(message));
+        return runner.runAsync(userId, sessionId, userMsg);
+    }
+
+    @Override
+    public Flowable<Event> handleMessageStream(String agentId, String userId, String sessionId, String message, String terminalSessionId) {
+        AiAgentRegisterVO aiAgentRegisterVO = defaultArmoryFactory.getAiAgentRegisterVO(agentId);
+
+        if (null == aiAgentRegisterVO) {
+            throw new AppException(ResponseCode.E0001.getCode());
+        }
+
+        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
+
+        // 设置终端会话ID到ThreadLocal，供 MCP 工具使用
+        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
+            log.info("设置终端会话ID: {}", terminalSessionId);
+            SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
+        }
+
+        Content userMsg = Content.fromParts(Part.fromText(message));
+
         return runner.runAsync(userId, sessionId, userMsg);
     }
 
