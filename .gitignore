@@ -37,3 +37,8 @@ build/
 
 ### Mac OS ###
 .DS_Store
+/data/
+/crowssh-server-app/data/
+/.playwright-mcp/
+/.idea/
+/.spec-workflow/

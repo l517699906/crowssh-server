@@ -1,10 +1,11 @@
-package com.llf.ai.domain.ssh.service;
+package com.llf.ai.domain.ssh.service.connection;
 
 import com.llf.ai.domain.ssh.adapter.port.ISshSessionPort;
 import com.llf.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
 import com.llf.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.llf.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.llf.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
+import com.llf.ai.domain.ssh.service.ISshConnectionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -14,11 +15,11 @@ import java.util.UUID;
 /**
  * SSH连接领域服务实现
  *
- * @author waissh dev
+ * @author llf
  */
 @Slf4j
 @Service
-public class SshConnectionService implements ISshConnectionDomainService{
+public class SshConnectionService implements ISshConnectionService {
 
     private final ISshConnectionRepository repository;
     private final ISshSessionPort sshSessionService;

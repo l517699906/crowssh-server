@@ -102,6 +102,9 @@
         <logger name="com.nmys.view" level="debug"/>
     </springProfile>
 
+    <!-- SSHJ 会在连接时输出大量握手与认证细节，仅保留异常告警。 -->
+    <logger name="net.schmizz.sshj" level="WARN"/>
+
     <root level="info">
         <appender-ref ref="CONSOLE"/>
         <!-- 异步日志-INFO -->

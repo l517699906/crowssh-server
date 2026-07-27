@@ -3,6 +3,7 @@ package com.llf.ai.infrastructure.adapter.port;
 import com.llf.ai.domain.ssh.adapter.port.ISshSessionPort;
 import lombok.extern.slf4j.Slf4j;
 import net.schmizz.sshj.SSHClient;
+import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier;
 import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile;
 import org.springframework.stereotype.Component;
@@ -72,6 +73,18 @@ public class SshSessionPort implements ISshSessionPort {
     public boolean isConnected(String connectionId) {
         SSHClient sshClient = sessions.get(connectionId);
         return sshClient != null && sshClient.isConnected() && sshClient.isAuthenticated();
+    }
+
+    /**
+     * 为终端适配器创建 SSHJ Session。
+     * 仅限基础设施层内部使用，避免将 SSHJ 类型暴露到领域端口。
+     */
+    Session openSession(String connectionId) throws IOException {
+        SSHClient sshClient = sessions.get(connectionId);
+        if (sshClient == null || !sshClient.isConnected() || !sshClient.isAuthenticated()) {
+            throw new IllegalStateException("SSH会话不可用 connectionId=" + connectionId);
+        }
+        return sshClient.startSession();
     }
 
     private void closeQuietly(SSHClient sshClient) {

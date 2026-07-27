@@ -10,7 +10,7 @@ import java.util.List;
  *
  * @author llf
  */
-public interface ISshConnectionDomainService {
+public interface ISshConnectionService {
 
     /**
      * 创建SSH连接

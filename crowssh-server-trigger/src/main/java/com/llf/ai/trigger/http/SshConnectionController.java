@@ -1,6 +1,5 @@
 package com.llf.ai.trigger.http;
 
-import com.llf.ai.api.ISshConnectionService;
 import com.llf.ai.api.dto.SshConnectionRequestDTO;
 import com.llf.ai.api.dto.SshConnectionResponseDTO;
 import com.llf.ai.api.response.Response;
@@ -8,7 +7,7 @@ import com.llf.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.llf.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.llf.ai.domain.ssh.model.valobj.AuthTypeEnum;
 import com.llf.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
-import com.llf.ai.domain.ssh.service.ISshConnectionDomainService;
+import com.llf.ai.domain.ssh.service.ISshConnectionService;
 import com.llf.ai.types.enums.ResponseCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -27,12 +26,12 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/ssh")
 @CrossOrigin(origins = "*")
-public class SshConnectionController implements ISshConnectionService {
+public class SshConnectionController implements com.llf.ai.api.ISshConnectionService {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Resource
-    private ISshConnectionDomainService sshConnectionDomainService;
+    private ISshConnectionService sshConnectionDomainService;
 
     @RequestMapping(value = "create_connection", method = RequestMethod.POST)
     @Override
