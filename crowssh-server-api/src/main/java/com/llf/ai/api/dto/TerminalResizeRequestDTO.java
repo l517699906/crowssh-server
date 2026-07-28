@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 /**
  * 调整终端大小请求
  *
- * @author xiaofuge
+ * @author llf
  */
 @Data
 @Builder

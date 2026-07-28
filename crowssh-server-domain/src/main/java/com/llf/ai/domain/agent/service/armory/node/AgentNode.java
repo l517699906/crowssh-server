@@ -45,7 +45,7 @@ public class AgentNode extends AbstractArmorySupport {
                     .instruction(agentConfig.getInstruction())
                     .outputKey(agentConfig.getOutputKey());
 
-            // 构建 ADK 工具列表 - 注意，这部分也可以提炼到配置文件
+            // 构建 ADK 工具列表
             List<Object> adkTools = new ArrayList<>();
 
             // 添加 SSH 执行工具（ADK 原生 FunctionTool）

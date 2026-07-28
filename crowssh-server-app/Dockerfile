@@ -2,7 +2,7 @@
 FROM openjdk:17-jdk-slim
 
 # 作者
-MAINTAINER xiaofuge
+MAINTAINER llf
 
 # 配置
 ENV PARAMS=""

@@ -7,7 +7,7 @@ import com.llf.ai.api.response.Response;
  * SSH 终端服务接口
  * 提供终端会话的打开、读写、调整大小、关闭等操作
  *
- * @author xiaofuge bugstack.cn @小傅哥
+ * @author llf
  * @date 2026/7/1 07:31
  */
 public interface ISshTerminalService {

@@ -42,16 +42,7 @@ public class SshTerminalService implements ISshTerminalService {
             throw new IllegalStateException("SSH连接未建立，请先连接");
         }
 
-        // 2. 清理同一 connectionId 的旧会话（基础设施层已关闭 channel，这里清理域层缓存）
-        sessionCache.entrySet().removeIf(entry -> {
-            if (connectionId.equals(entry.getValue().getConnectionId())) {
-                log.info("清理旧终端会话缓存 sessionId={} connectionId={}", entry.getKey(), connectionId);
-                return true;
-            }
-            return false;
-        });
-
-        // 3. 通过基础设施层打开终端会话
+        // 2. 通过基础设施层打开独立终端会话；同一 SSH 连接可承载多个 Shell。
         String sessionId = terminalSessionService.openTerminal(connectionId, cols, rows);
 
         // 3. 创建并缓存会话实体
@@ -81,14 +72,13 @@ public class SshTerminalService implements ISshTerminalService {
             throw new IllegalArgumentException("终端会话不存在或已关闭");
         }
 
-        // 2. 写入命令
-        terminalSessionService.write(sessionId, command);
+        // 2. 使用 executeCommandAndWait 等待命令执行完成
+        //    超时时间 30 秒（大部分命令应该能在 30 秒内完成）
+        String output = terminalSessionService.executeCommandAndWait(sessionId, command, 30000);
 
         // 3. 更新活跃时间
         entity.touch();
 
-        // 4. 读取输出
-        String output = terminalSessionService.read(sessionId);
         log.debug("命令执行完成 sessionId={} outputLength={}", sessionId, output.length());
 
         return output;

@@ -19,9 +19,13 @@ public class SshSessionPort implements ISshSessionPort {
     private final ConcurrentHashMap<String, SSHClient> sessions = new ConcurrentHashMap<>();
 
     @Override
-    public boolean connect(String connectionId, String host, int port, String username,
+    public synchronized boolean connect(String connectionId, String host, int port, String username,
                            String password, String privateKey) {
-        // 如果已连接，先断开旧连接
+        if (isConnected(connectionId)) {
+            log.debug("复用已建立的 SSH 连接 connectionId={}", connectionId);
+            return true;
+        }
+
         disconnect(connectionId);
 
         if ((privateKey == null || privateKey.isEmpty())
@@ -61,7 +65,7 @@ public class SshSessionPort implements ISshSessionPort {
     }
 
     @Override
-    public void disconnect(String connectionId) {
+    public synchronized void disconnect(String connectionId) {
         SSHClient sshClient = sessions.remove(connectionId);
         if (sshClient != null) {
             closeQuietly(sshClient);

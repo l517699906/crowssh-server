@@ -13,7 +13,7 @@ import java.util.Map;
  * <p>
  * 使用 ADK 的 @Schema 注解定义参数，支持 FunctionTool.create()
  *
- * @author xiaofuge bugstack.cn @小傅哥
+ * @author llf
  * 2026/7/8 07:30
  */
 @Slf4j
@@ -26,11 +26,15 @@ public class SshExecuteAdkTool {
     // 当前线程的终端会话 ID（使用 InheritableThreadLocal 支持异步线程继承）
     private static final InheritableThreadLocal<String> currentTerminalSession = new InheritableThreadLocal<>();
 
+    /** 当前会话级终端会话ID（由 Controller 设置，优先级低于 ThreadLocal） */
+    private static volatile String sessionTerminalSessionId;
+
     /**
-     * 设置当前线程的终端会话 ID（兼容旧接口）
+     * 设置当前线程的终端会话 ID
      */
     public static void setCurrentTerminalSession(String terminalSessionId) {
         currentTerminalSession.set(terminalSessionId);
+        sessionTerminalSessionId = terminalSessionId;
         log.info("[ThreadLocal] 设置终端会话: thread={}, terminalSession={}",
                 Thread.currentThread().getName(), terminalSessionId);
     }
@@ -40,6 +44,7 @@ public class SshExecuteAdkTool {
      */
     public static void clearCurrentTerminalSession() {
         currentTerminalSession.remove();
+        sessionTerminalSessionId = null;
     }
 
     public Map<String, Object> executeCommand(
@@ -48,6 +53,12 @@ public class SshExecuteAdkTool {
 
         // 优先从 ThreadLocal 获取，支持异步线程继承
         String terminalSessionId = currentTerminalSession.get();
+
+        // ThreadLocal 为空时回退到会话级变量（线程池场景下 ThreadLocal 可能失效）
+        if (terminalSessionId == null || terminalSessionId.isEmpty()) {
+            terminalSessionId = sessionTerminalSessionId;
+            log.info("[executeCommand] ThreadLocal 为空，回退到会话级变量: terminalSessionId={}", terminalSessionId);
+        }
 
         log.info("[executeCommand] thread={}, terminalSessionId={}, command={}",
                 Thread.currentThread().getName(), terminalSessionId, command);

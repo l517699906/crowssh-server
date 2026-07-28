@@ -35,6 +35,19 @@ public interface ITerminalSessionPort {
     String read(String sessionId);
 
     /**
+     * 执行命令并等待输出完成（用于 AI 工具调用）
+     * <p>
+     * 写入命令 + 换行符，等待 Shell prompt 重新出现后返回完整输出。
+     * 与 write+read 不同，此方法会阻塞等待命令执行完成。
+     *
+     * @param sessionId 会话ID
+     * @param command   命令内容（不含换行符）
+     * @param timeoutMs 超时时间（毫秒）
+     * @return 命令执行后的完整终端输出
+     */
+    String executeCommandAndWait(String sessionId, String command, long timeoutMs);
+
+    /**
      * 调整终端大小
      *
      * @param sessionId 会话ID
