@@ -3,3 +3,7 @@ spring:
     name: ai-agent-scaffold-app
   profiles:
     active: dev
+  servlet:
+    multipart:
+      max-file-size: 1GB
+      max-request-size: 1GB

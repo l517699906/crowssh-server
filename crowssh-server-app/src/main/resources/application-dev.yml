@@ -17,8 +17,9 @@ spring:
   config:
     import:
 #      - classpath:agent/test-agent.yml
-      - classpath:agent/only-one-agent.yml
+#      - classpath:agent/only-one-agent.yml
 #      - classpath:agent/parallel_research_app.yml
+      - classpath:agent/ssh-agent.yml
   datasource:
     username: root
     password:

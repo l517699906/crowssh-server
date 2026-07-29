@@ -4,6 +4,7 @@ import com.llf.ai.domain.ssh.adapter.port.ISshSessionPort;
 import lombok.extern.slf4j.Slf4j;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.connection.channel.direct.Session;
+import net.schmizz.sshj.sftp.SFTPClient;
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier;
 import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile;
 import org.springframework.stereotype.Component;
@@ -89,6 +90,14 @@ public class SshSessionPort implements ISshSessionPort {
             throw new IllegalStateException("SSH会话不可用 connectionId=" + connectionId);
         }
         return sshClient.startSession();
+    }
+
+    SFTPClient openSftpClient(String connectionId) throws IOException {
+        SSHClient sshClient = sessions.get(connectionId);
+        if (sshClient == null || !sshClient.isConnected() || !sshClient.isAuthenticated()) {
+            throw new IllegalStateException("SSH会话不可用 connectionId=" + connectionId);
+        }
+        return sshClient.newSFTPClient();
     }
 
     private void closeQuietly(SSHClient sshClient) {

@@ -140,6 +140,10 @@
         </dependency>
         <dependency>
             <groupId>com.llf.ai</groupId>
+            <artifactId>crowssh-server-case</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.llf.ai</groupId>
             <artifactId>crowssh-server-infrastructure</artifactId>
         </dependency>
     </dependencies>
