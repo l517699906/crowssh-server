@@ -9,6 +9,7 @@ import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import com.llf.ai.domain.agent.service.armory.matter.mcp.client.ToolMcpCreateService;
 import com.llf.ai.domain.agent.service.armory.matter.mcp.client.factory.DefaultMcpClientFactory;
 import com.llf.ai.domain.agent.service.armory.matter.skills.ToolSkillsCreateService;
+import com.llf.ai.domain.agent.service.model.RuntimeRoutingChatModel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -65,7 +66,7 @@ public class ChatModelNode extends AbstractArmorySupport {
         }
 
         // 构建对话模型
-        ChatModel chatModel = OpenAiChatModel.builder()
+        ChatModel defaultChatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
                         .model(chatModelConfig.getModel())
@@ -73,7 +74,7 @@ public class ChatModelNode extends AbstractArmorySupport {
                         .build())
                 .build();
 
-        dynamicContext.setChatModel(chatModel);
+        dynamicContext.setChatModel(new RuntimeRoutingChatModel(defaultChatModel));
 
         return router(requestParameter, dynamicContext);
     }

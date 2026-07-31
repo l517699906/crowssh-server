@@ -1,6 +1,5 @@
 package com.llf.ai.config;
 
-import com.alibaba.fastjson.JSON;
 import com.llf.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigProperties;
 import com.llf.ai.domain.agent.service.IArmoryService;
 import jakarta.annotation.Resource;
@@ -26,7 +25,10 @@ public class AiAgentAutoConfig implements ApplicationListener<ApplicationReadyEv
     @Override
     public void onApplicationEvent(ApplicationReadyEvent event) {
         try {
-            log.info("Ai Agent 智能体装配 {}", JSON.toJSONString(aiAgentAutoConfigProperties.getTables().values()));
+            int agentCount = aiAgentAutoConfigProperties.getTables() == null
+                    ? 0
+                    : aiAgentAutoConfigProperties.getTables().size();
+            log.info("Ai Agent 智能体装配，配置数量: {}", agentCount);
 
             armoryService.acceptArmoryAgents(new ArrayList<>(aiAgentAutoConfigProperties.getTables().values()));
         } catch (Exception e) {

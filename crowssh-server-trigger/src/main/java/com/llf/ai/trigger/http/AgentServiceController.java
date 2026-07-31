@@ -9,6 +9,8 @@ import com.llf.ai.api.response.Response;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.model.RuntimeChatModelScope;
+import com.llf.ai.domain.agent.service.model.RuntimeChatModelService;
 import com.llf.ai.types.enums.ResponseCode;
 import com.llf.ai.types.exception.AppException;
 import io.reactivex.rxjava3.core.Flowable;
@@ -33,6 +35,9 @@ public class AgentServiceController implements IAgentService {
 
     @Resource
     private SshExecuteAdkTool sshExecuteAdkTool;
+
+    @Resource
+    private RuntimeChatModelService runtimeChatModelService;
 
     @RequestMapping(value = "query_ai_agent_config_list", method = RequestMethod.GET)
     @Override
@@ -152,9 +157,10 @@ public class AgentServiceController implements IAgentService {
         // MVP 简化版：直接使用 ChatService.handleMessageStream() 转发 SSE 事件
         // 将 ADK 事件流转为结构化 JSON SSE 事件，前端可区分文本和工具结果
         try {
-            log.info("MVP 流式对话 agentId:{} userId:{} sessionId:{} terminalSessionId:{} message:{}",
+            log.info("MVP 流式对话 agentId:{} userId:{} sessionId:{} terminalSessionId:{} messageLength:{}",
                     requestDTO.getAgentId(), requestDTO.getUserId(), requestDTO.getSessionId(),
-                    requestDTO.getTerminalSessionId(), requestDTO.getMessage());
+                    requestDTO.getTerminalSessionId(),
+                    requestDTO.getMessage() == null ? 0 : requestDTO.getMessage().length());
 
             // 如果未指定 sessionId，先创建
             String sessionId = requestDTO.getSessionId();
@@ -165,11 +171,7 @@ public class AgentServiceController implements IAgentService {
             // 创建 SSE 发射器（10 分钟超时，AI + SSH 命令执行可能需要较长时间）
             ResponseBodyEmitter emitter = new ResponseBodyEmitter(10 * 60 * 1000L);
 
-            // 绑定终端会话到 ThreadLocal（核心！工具从这里取 terminalSessionId）
             String terminalSessionId = requestDTO.getTerminalSessionId();
-            if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
-                SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-            }
 
             // 异步执行，避免阻塞 HTTP 线程
             String finalSessionId = sessionId;
@@ -194,7 +196,8 @@ public class AgentServiceController implements IAgentService {
                 heartbeatThread.setDaemon(true);
                 heartbeatThread.start();
 
-                try {
+                try (RuntimeChatModelScope ignored = runtimeChatModelService.open(
+                        RuntimeModelConfigMapper.from(requestDTO.getRuntimeModel()))) {
                     // 调用 ChatService 获取事件流
                     Flowable<Event> events = chatService.handleMessageStream(
                             requestDTO.getAgentId(),
@@ -293,6 +296,7 @@ public class AgentServiceController implements IAgentService {
                     heartbeatThread.interrupt();
                     // 清理 ThreadLocal 和会话级变量
                     SshExecuteAdkTool.clearCurrentTerminalSession();
+                    requestDTO.clearRuntimeSecret();
                 }
             }, "mvp-stream-" + sessionId).start();
 
