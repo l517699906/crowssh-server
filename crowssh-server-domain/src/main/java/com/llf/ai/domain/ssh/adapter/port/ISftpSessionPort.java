@@ -19,4 +19,9 @@ public interface ISftpSessionPort {
     void download(String connectionId, String remotePath, OutputStream outputStream);
 
     long fileSize(String connectionId, String remotePath);
+
+    SftpContentEntity readContent(String connectionId, String remotePath, long maxSize);
+
+    SftpContentEntity writeContent(String connectionId, String remotePath, byte[] content,
+                                   String expectedVersion, long maxSize);
 }

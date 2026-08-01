@@ -207,6 +207,7 @@ public class TerminalSessionPort implements ITerminalSessionPort {
             // 3. 等待输出稳定（使用 wait/notifyAll 机制）
             long deadline = System.currentTimeMillis() + timeoutMs;
             int stableCount = 0;
+            int observedLength = 0;
             final int STABLE_THRESHOLD = 3; // 连续 3 次无新数据认为输出完成
             final long POLL_INTERVAL = 100; // 轮询间隔 ms
 
@@ -214,7 +215,7 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                 synchronized (aiBuffer) {
                     // 等待数据到达或超时
                     long waitMs = Math.min(POLL_INTERVAL, deadline - System.currentTimeMillis());
-                    if (waitMs > 0 && aiBuffer.length() == 0) {
+                    if (waitMs > 0 && aiBuffer.length() == observedLength) {
                         try {
                             aiBuffer.wait(waitMs);
                         } catch (InterruptedException e) {
@@ -223,7 +224,9 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                         }
                     }
 
-                    if (aiBuffer.length() > 0) {
+                    int currentLength = aiBuffer.length();
+                    if (currentLength > observedLength) {
+                        observedLength = currentLength;
                         stableCount = 0; // 有新数据，重置稳定计数
                     } else {
                         stableCount++;

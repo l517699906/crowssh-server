@@ -2,7 +2,6 @@ package com.llf.ai.trigger.http;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.events.Event;
-import com.google.adk.events.EventActions;
 import com.llf.ai.api.IAgentService;
 import com.llf.ai.api.dto.*;
 import com.llf.ai.api.response.Response;
@@ -22,6 +21,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -172,20 +174,92 @@ public class AgentServiceController implements IAgentService {
             ResponseBodyEmitter emitter = new ResponseBodyEmitter(10 * 60 * 1000L);
 
             String terminalSessionId = requestDTO.getTerminalSessionId();
+            String finalSessionId = sessionId;
+            AtomicBoolean streamActive = new AtomicBoolean(true);
+            AtomicBoolean responseCompleted = new AtomicBoolean(false);
+            AtomicReference<Thread> streamThreadRef = new AtomicReference<>();
+
+            Runnable cancelStream = () -> {
+                if (!streamActive.getAndSet(false)) {
+                    return;
+                }
+                Thread streamThread = streamThreadRef.get();
+                if (streamThread != null && streamThread != Thread.currentThread()) {
+                    streamThread.interrupt();
+                }
+            };
+
+            emitter.onTimeout(() -> {
+                log.warn("MVP 流式对话超时，终止后台任务 sessionId={}", finalSessionId);
+                cancelStream.run();
+            });
+            emitter.onError(error -> {
+                if (!responseCompleted.get() && streamActive.get()) {
+                    log.warn("MVP 流式连接异常，终止后台任务 sessionId={} reason={}",
+                            finalSessionId, error.getMessage());
+                    cancelStream.run();
+                }
+            });
+            emitter.onCompletion(() -> {
+                if (!responseCompleted.get() && streamActive.get()) {
+                    log.warn("MVP 流式连接提前结束，终止后台任务 sessionId={}", finalSessionId);
+                    cancelStream.run();
+                }
+            });
 
             // 异步执行，避免阻塞 HTTP 线程
-            String finalSessionId = sessionId;
-            new Thread(() -> {
+            Thread streamThread = new Thread(() -> {
                 ObjectMapper objectMapper = new ObjectMapper();
+                StreamEventWriter eventWriter = new StreamEventWriter(
+                        emitter, objectMapper, finalSessionId);
+                SshExecuteAdkTool.ExecutionObserver executionObserver = executionEvent -> {
+                    if (!streamActive.get()) {
+                        return;
+                    }
+                    try {
+                        String eventType = "running".equals(executionEvent.getStatus())
+                                ? "tool_call"
+                                : "tool_result";
+                        Map<String, Object> toolEvent = eventWriter.newEvent(eventType);
+                        toolEvent.put("toolCallId", executionEvent.getToolCallId());
+                        toolEvent.put("toolName", executionEvent.getToolName());
+                        toolEvent.put("command", executionEvent.getCommand());
+                        toolEvent.put("status", executionEvent.getStatus());
+                        toolEvent.put("startedAt", executionEvent.getStartedAt());
+
+                        if ("tool_result".equals(eventType)) {
+                            toolEvent.put("completedAt", executionEvent.getCompletedAt());
+                            toolEvent.put("durationMs", executionEvent.getDurationMs());
+                            toolEvent.put("outputLength", executionEvent.getOutputLength());
+                            toolEvent.put("content", "success".equals(executionEvent.getStatus())
+                                    ? "命令执行完成，完整输出已保留在终端中。"
+                                    : executionEvent.getErrorMessage());
+                            if (executionEvent.getErrorMessage() != null) {
+                                toolEvent.put("errorMessage", executionEvent.getErrorMessage());
+                            }
+                        }
+
+                        eventWriter.send(toolEvent);
+                    } catch (Exception e) {
+                        log.warn("工具执行事件发送失败: toolCallId={}, reason={}",
+                                executionEvent.getToolCallId(), e.getMessage());
+                        cancelStream.run();
+                    }
+                };
+                SshExecuteAdkTool.setExecutionObserver(terminalSessionId, executionObserver);
+
                 // 心跳保活线程：在 AI 处理期间定期发送 SSE 注释行，防止浏览器/proxy 超时断开
-                java.util.concurrent.atomic.AtomicBoolean streaming = new java.util.concurrent.atomic.AtomicBoolean(true);
                 Thread heartbeatThread = new Thread(() -> {
                     try {
-                        while (streaming.get()) {
+                        while (streamActive.get()) {
                             Thread.sleep(15000); // 每 15 秒发一次心跳
+                            if (!streamActive.get()) {
+                                break;
+                            }
                             try {
                                 emitter.send(": heartbeat\n\n");
                             } catch (Exception e) {
+                                cancelStream.run();
                                 break;
                             }
                         }
@@ -198,6 +272,11 @@ public class AgentServiceController implements IAgentService {
 
                 try (RuntimeChatModelScope ignored = runtimeChatModelService.open(
                         RuntimeModelConfigMapper.from(requestDTO.getRuntimeModel()))) {
+                    Map<String, Object> statusEvent = eventWriter.newEvent("status");
+                    statusEvent.put("status", "running");
+                    statusEvent.put("content", "正在处理请求");
+                    eventWriter.send(statusEvent);
+
                     // 调用 ChatService 获取事件流
                     Flowable<Event> events = chatService.handleMessageStream(
                             requestDTO.getAgentId(),
@@ -211,94 +290,80 @@ public class AgentServiceController implements IAgentService {
 
                     // 遍历事件流，转发为结构化 SSE JSON 事件
                     events.blockingForEach(event -> {
+                        if (!streamActive.get() || Thread.currentThread().isInterrupted()) {
+                            throw new CancellationException("流式连接已结束");
+                        }
                         try {
-                            event.stringifyContent();
-
                             // 1. 处理文本内容（AI 的回复文本）
-                            String eventText = event.stringifyContent();
+                            String eventText = extractTextContent(event);
                             if (!eventText.isBlank()) {
                                 textAccumulator.append(eventText);
 
-                                Map<String, Object> textEvent = new HashMap<>();
-                                textEvent.put("event", "text");
+                                Map<String, Object> textEvent = eventWriter.newEvent("text");
                                 textEvent.put("content", eventText);
                                 textEvent.put("fullText", textAccumulator.toString());
-                                emitter.send(objectMapper.writeValueAsString(textEvent) + "\n");
+                                eventWriter.send(textEvent);
                                 log.info("SSE text 事件已发送: length={}, fullTextLength={}, turnComplete={}",
                                         eventText.length(), textAccumulator.length(), event.turnComplete());
                             }
 
-                            // 2. 从 stateDelta 检测工具执行结果（SSH 命令输出）
-                            EventActions actions = event.actions();
-                            if (actions != null) {
-                                Map<String, Object> stateDelta = actions.stateDelta();
-                                if (stateDelta != null && !stateDelta.isEmpty()) {
-                                    for (Map.Entry<String, Object> entry : stateDelta.entrySet()) {
-                                        String stateKey = entry.getKey();
-                                        Object stateValue = entry.getValue();
-                                        if ("REMOVED".equals(stateValue)) continue;
-
-                                        String resultContent = stateValue != null ? stateValue.toString() : "";
-                                        // 去除 JSON 字符串外层引号号
-                                        if (resultContent.startsWith("\"") && resultContent.endsWith("\"") && resultContent.length() > 1) {
-                                            resultContent = resultContent.substring(1, resultContent.length() - 1);
-                                        }
-
-                                        String toolCallId = "call_" + stateKey + "_" + System.currentTimeMillis();
-
-                                        // 发送 tool_call 事件
-                                        Map<String, Object> toolCallEvent = new HashMap<>();
-                                        toolCallEvent.put("event", "tool_call");
-                                        toolCallEvent.put("toolCallId", toolCallId);
-                                        toolCallEvent.put("toolName", "executeCommand");
-                                        toolCallEvent.put("status", "success");
-                                        emitter.send(objectMapper.writeValueAsString(toolCallEvent) + "\n");
-
-                                        // 发送 tool_result 事件（SSH 命令输出）
-                                        Map<String, Object> toolResultEvent = new HashMap<>();
-                                        toolResultEvent.put("event", "tool_result");
-                                        toolResultEvent.put("toolCallId", toolCallId);
-                                        toolResultEvent.put("content", resultContent);
-                                        toolResultEvent.put("status", "success");
-                                        emitter.send(objectMapper.writeValueAsString(toolResultEvent) + "\n");
-
-                                        log.info("工具执行结果已发送: stateKey={}, resultLength={}", stateKey, resultContent.length());
-                                    }
-                                }
-                            }
-
                         } catch (Exception ex) {
-                            log.warn("SSE 发送异常: {}", ex.getMessage());
+                            cancelStream.run();
+                            throw new CancellationException("SSE 发送异常: " + ex.getMessage());
                         }
                     });
 
-                    // 发送 done 事件
-                    Map<String, Object> doneEvent = new HashMap<>();
-                    doneEvent.put("event", "done");
-                    doneEvent.put("content", textAccumulator.toString());
-                    emitter.send(objectMapper.writeValueAsString(doneEvent) + "\n");
+                    if (!streamActive.get()) {
+                        return;
+                    }
 
+                    Map<String, Object> completedStatusEvent = eventWriter.newEvent("status");
+                    completedStatusEvent.put("status", "success");
+                    completedStatusEvent.put("content", "处理完成");
+                    eventWriter.send(completedStatusEvent);
+
+                    // 发送 done 事件
+                    Map<String, Object> doneEvent = eventWriter.newEvent("done");
+                    doneEvent.put("content", textAccumulator.toString());
+                    doneEvent.put("stopReason", "completed");
+                    eventWriter.send(doneEvent);
+
+                    responseCompleted.set(true);
+                    streamActive.set(false);
                     emitter.complete();
                     log.info("MVP 流式对话完成 sessionId={}", finalSessionId);
 
                 } catch (Exception e) {
-                    log.error("MVP 流式对话异常", e);
-                    try {
-                        Map<String, Object> errorEvent = new HashMap<>();
-                        errorEvent.put("event", "error");
-                        errorEvent.put("content", e.getMessage());
-                        emitter.send(new ObjectMapper().writeValueAsString(errorEvent) + "\n");
-                    } catch (Exception ignored) {
+                    boolean cancelled = !streamActive.get()
+                            || Thread.currentThread().isInterrupted()
+                            || e instanceof CancellationException;
+                    streamActive.set(false);
+                    if (cancelled) {
+                        log.info("MVP 流式对话已终止 sessionId={}", finalSessionId);
+                    } else {
+                        log.error("MVP 流式对话异常", e);
+                        try {
+                            Map<String, Object> errorEvent = eventWriter.newEvent("error");
+                            errorEvent.put("content", e.getMessage() == null ? "智能体执行失败" : e.getMessage());
+                            errorEvent.put("code", "AGENT_STREAM_ERROR");
+                            errorEvent.put("retryable", false);
+                            eventWriter.send(errorEvent);
+                        } catch (Exception ignored) {
+                        }
+                        responseCompleted.set(true);
+                        emitter.complete();
                     }
-                    emitter.completeWithError(e);
                 } finally {
-                    streaming.set(false);
+                    streamActive.set(false);
                     heartbeatThread.interrupt();
+                    SshExecuteAdkTool.clearExecutionObserver(terminalSessionId, executionObserver);
                     // 清理 ThreadLocal 和会话级变量
                     SshExecuteAdkTool.clearCurrentTerminalSession();
                     requestDTO.clearRuntimeSecret();
                 }
-            }, "mvp-stream-" + sessionId).start();
+            }, "mvp-stream-" + sessionId);
+            streamThreadRef.set(streamThread);
+            streamThread.start();
 
             return emitter;
 
@@ -307,6 +372,47 @@ public class AgentServiceController implements IAgentService {
             ResponseBodyEmitter emitter = new ResponseBodyEmitter();
             emitter.completeWithError(e);
             return emitter;
+        }
+    }
+
+    private static String extractTextContent(Event event) {
+        return event.content()
+                .flatMap(content -> content.parts())
+                .stream()
+                .flatMap(List::stream)
+                .map(part -> part.text().orElse(""))
+                .collect(Collectors.joining());
+    }
+
+    private static final class StreamEventWriter {
+        private final ResponseBodyEmitter emitter;
+        private final ObjectMapper objectMapper;
+        private final String sessionId;
+        private long sequence;
+
+        private StreamEventWriter(
+                ResponseBodyEmitter emitter,
+                ObjectMapper objectMapper,
+                String sessionId) {
+            this.emitter = emitter;
+            this.objectMapper = objectMapper;
+            this.sessionId = sessionId;
+        }
+
+        private Map<String, Object> newEvent(String eventType) {
+            Map<String, Object> event = new HashMap<>();
+            event.put("event", eventType);
+            return event;
+        }
+
+        private synchronized void send(Map<String, Object> event) throws Exception {
+            long nextSequence = ++sequence;
+            event.put("schemaVersion", 2);
+            event.put("eventId", sessionId + ":" + nextSequence);
+            event.put("sequence", nextSequence);
+            event.put("timestamp", System.currentTimeMillis());
+            event.put("sessionId", sessionId);
+            emitter.send(objectMapper.writeValueAsString(event) + "\n");
         }
     }
 }

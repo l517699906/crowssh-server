@@ -13,6 +13,7 @@ public enum ResponseCode {
     UN_ERROR("0001", "未知失败"),
     ILLEGAL_PARAMETER("0002", "非法参数"),
     NOT_FOUND_METHOD("0003", "不存在的方法"),
+    SFTP_VERSION_CONFLICT("SFTP_CONFLICT", "远程文件已被修改"),
     E0001("E0001", "智能体ID不存在"),
     E0002("E0002", "智能体MCP配置不在可加载范围"),
     ;

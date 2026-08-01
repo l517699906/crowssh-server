@@ -2,20 +2,27 @@ package com.llf.ai.trigger.http;
 
 import com.llf.ai.api.dto.SftpFileDTO;
 import com.llf.ai.api.dto.SftpListResponseDTO;
+import com.llf.ai.api.dto.SftpTextContentDTO;
+import com.llf.ai.api.dto.SftpTextSaveRequestDTO;
 import com.llf.ai.api.response.Response;
 import com.llf.ai.domain.ssh.adapter.port.SftpFileEntity;
 import com.llf.ai.domain.ssh.service.ISftpService;
+import com.llf.ai.domain.ssh.service.sftp.SftpTextContentEntity;
+import com.llf.ai.domain.ssh.service.sftp.SftpVersionConflictException;
 import com.llf.ai.types.enums.ResponseCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -92,11 +99,56 @@ public class SftpController {
                 .body(body);
     }
 
+    @GetMapping("/content")
+    public ResponseEntity<Response<SftpTextContentDTO>> readText(
+            @RequestParam("connectionId") String connectionId,
+            @RequestParam("path") String path) {
+        try {
+            return ResponseEntity.ok(success(toDTO(sftpService.readText(connectionId, path))));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("读取 SFTP 文本失败 connectionId={} path={} error={}",
+                    connectionId, path, e.getMessage());
+            return ResponseEntity.badRequest().body(failure(e.getMessage()));
+        }
+    }
+
+    @PutMapping(value = "/content", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Response<SftpTextContentDTO>> saveText(
+            @RequestBody SftpTextSaveRequestDTO request) {
+        try {
+            SftpTextContentEntity saved = sftpService.saveText(
+                    request.getConnectionId(), request.getPath(), request.getContent(),
+                    request.getVersion(), request.getEncoding(), request.getLineEnding());
+            return ResponseEntity.ok(success(toDTO(saved)));
+        } catch (SftpVersionConflictException e) {
+            log.info("SFTP 文本保存冲突 connectionId={} path={}",
+                    request.getConnectionId(), request.getPath());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(failure(ResponseCode.SFTP_VERSION_CONFLICT, e.getMessage()));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("保存 SFTP 文本失败 connectionId={} path={} error={}",
+                    request.getConnectionId(), request.getPath(), e.getMessage());
+            return ResponseEntity.badRequest().body(failure(e.getMessage()));
+        }
+    }
+
     private SftpFileDTO toDTO(SftpFileEntity entity) {
         return SftpFileDTO.builder()
                 .name(entity.getName())
                 .path(entity.getPath())
                 .directory(entity.isDirectory())
+                .size(entity.getSize())
+                .modifiedAt(entity.getModifiedAt())
+                .build();
+    }
+
+    private SftpTextContentDTO toDTO(SftpTextContentEntity entity) {
+        return SftpTextContentDTO.builder()
+                .path(entity.getPath())
+                .content(entity.getContent())
+                .version(entity.getVersion())
+                .encoding(entity.getEncoding())
+                .lineEnding(entity.getLineEnding())
                 .size(entity.getSize())
                 .modifiedAt(entity.getModifiedAt())
                 .build();
@@ -117,8 +169,12 @@ public class SftpController {
     }
 
     private <T> Response<T> failure(String message) {
+        return failure(ResponseCode.ILLEGAL_PARAMETER, message);
+    }
+
+    private <T> Response<T> failure(ResponseCode code, String message) {
         return Response.<T>builder()
-                .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                .code(code.getCode())
                 .info(message)
                 .build();
     }

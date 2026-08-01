@@ -6,7 +6,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * SSH 命令执行 ADK 工具，为智能体提供在 SSH 终端执行命令的能力
@@ -25,6 +28,10 @@ public class SshExecuteAdkTool {
 
     // 当前线程的终端会话 ID（使用 InheritableThreadLocal 支持异步线程继承）
     private static final InheritableThreadLocal<String> currentTerminalSession = new InheritableThreadLocal<>();
+
+    // 工具执行观察器用于将可验证的执行状态转发给当前 SSE 请求，不传递完整终端输出
+    private static final InheritableThreadLocal<ExecutionObserver> currentExecutionObserver = new InheritableThreadLocal<>();
+    private static final Map<String, ExecutionObserver> executionObserversByTerminal = new ConcurrentHashMap<>();
 
     /** 当前会话级终端会话ID（由 Controller 设置，优先级低于 ThreadLocal） */
     private static volatile String sessionTerminalSessionId;
@@ -47,9 +54,26 @@ public class SshExecuteAdkTool {
         sessionTerminalSessionId = null;
     }
 
+    public static void setExecutionObserver(String terminalSessionId, ExecutionObserver observer) {
+        currentExecutionObserver.set(observer);
+        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
+            executionObserversByTerminal.put(terminalSessionId, observer);
+        }
+    }
+
+    public static void clearExecutionObserver(String terminalSessionId, ExecutionObserver observer) {
+        currentExecutionObserver.remove();
+        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
+            executionObserversByTerminal.remove(terminalSessionId, observer);
+        }
+    }
+
     public Map<String, Object> executeCommand(
             @Annotations.Schema(name = "command", description = "要执行的 Shell 命令，如: ls -la, apt install docker.io, docker --version")
             String command) {
+
+        String toolCallId = "call_" + UUID.randomUUID();
+        long startedAt = System.currentTimeMillis();
 
         // 优先从 ThreadLocal 获取，支持异步线程继承
         String terminalSessionId = currentTerminalSession.get();
@@ -63,22 +87,18 @@ public class SshExecuteAdkTool {
         log.info("[executeCommand] thread={}, terminalSessionId={}, command={}",
                 Thread.currentThread().getName(), terminalSessionId, command);
 
+        notifyObserver(terminalSessionId, ExecutionEvent.running(toolCallId, command, startedAt));
+
         if (terminalSessionId == null || terminalSessionId.isEmpty()) {
             log.warn("[executeCommand] 终端会话ID为空，无法执行命令");
-            return Map.of(
-                    "success", false,
-                    "output", "未绑定 SSH 终端会话。请先打开 SSH 终端连接。",
-                    "command", command
-            );
+            return failureResult(toolCallId, terminalSessionId, command, startedAt,
+                    "未绑定 SSH 终端会话。请先打开 SSH 终端连接。");
         }
 
         if (!sshTerminalService.sessionExists(terminalSessionId)) {
             log.warn("[executeCommand] 终端会话不存在: {}", terminalSessionId);
-            return Map.of(
-                    "success", false,
-                    "output", "SSH 终端会话不存在或已关闭: " + terminalSessionId,
-                    "command", command
-            );
+            return failureResult(toolCallId, terminalSessionId, command, startedAt,
+                    "SSH 终端会话不存在或已关闭: " + terminalSessionId);
         }
 
         try {
@@ -93,26 +113,172 @@ public class SshExecuteAdkTool {
             // 分析输出，判断是否成功
             boolean success = isExecutionSuccessful(output);
 
-            Map<String, Object> result = new java.util.HashMap<>();
+            Map<String, Object> result = new HashMap<>();
             result.put("command", command);
             result.put("output", output);
             result.put("success", success);
 
+            String suggestion = null;
             if (!success) {
-                result.put("suggestion", analyzeError(output));
+                suggestion = analyzeError(output);
+                result.put("suggestion", suggestion);
             }
+
+            long completedAt = System.currentTimeMillis();
+            notifyObserver(terminalSessionId, ExecutionEvent.completed(
+                    toolCallId,
+                    command,
+                    success ? "success" : "error",
+                    startedAt,
+                    completedAt,
+                    output.length(),
+                    suggestion
+            ));
 
             return result;
 
         } catch (Exception e) {
             log.error("SSH 命令执行异常: session={}, command={}", terminalSessionId, command, e);
-            return Map.of(
-                    "success", false,
-                    "output", "命令执行异常: " + e.getMessage(),
-                    "command", command
+            return failureResult(toolCallId, terminalSessionId, command, startedAt,
+                    "命令执行异常: " + e.getMessage());
+        }
+
+    }
+
+    private Map<String, Object> failureResult(
+            String toolCallId,
+            String terminalSessionId,
+            String command,
+            long startedAt,
+            String message) {
+        long completedAt = System.currentTimeMillis();
+        notifyObserver(terminalSessionId, ExecutionEvent.completed(
+                toolCallId,
+                command,
+                "error",
+                startedAt,
+                completedAt,
+                0,
+                message
+        ));
+        return Map.of(
+                "success", false,
+                "output", message,
+                "command", command
+        );
+    }
+
+    private void notifyObserver(String terminalSessionId, ExecutionEvent event) {
+        ExecutionObserver observer = null;
+        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
+            observer = executionObserversByTerminal.get(terminalSessionId);
+        }
+        if (observer == null) {
+            observer = currentExecutionObserver.get();
+        }
+        if (observer == null) {
+            return;
+        }
+        try {
+            observer.onExecutionEvent(event);
+        } catch (Exception e) {
+            log.warn("工具执行状态通知失败: toolCallId={}, reason={}", event.getToolCallId(), e.getMessage());
+        }
+    }
+
+    @FunctionalInterface
+    public interface ExecutionObserver {
+        void onExecutionEvent(ExecutionEvent event);
+    }
+
+    public static final class ExecutionEvent {
+        private final String toolCallId;
+        private final String toolName;
+        private final String command;
+        private final String status;
+        private final long startedAt;
+        private final long completedAt;
+        private final long durationMs;
+        private final int outputLength;
+        private final String errorMessage;
+
+        private ExecutionEvent(
+                String toolCallId,
+                String command,
+                String status,
+                long startedAt,
+                long completedAt,
+                int outputLength,
+                String errorMessage) {
+            this.toolCallId = toolCallId;
+            this.toolName = "executeCommand";
+            this.command = command;
+            this.status = status;
+            this.startedAt = startedAt;
+            this.completedAt = completedAt;
+            this.durationMs = completedAt > 0 ? Math.max(0, completedAt - startedAt) : 0;
+            this.outputLength = outputLength;
+            this.errorMessage = errorMessage;
+        }
+
+        public static ExecutionEvent running(String toolCallId, String command, long startedAt) {
+            return new ExecutionEvent(toolCallId, command, "running", startedAt, 0, 0, null);
+        }
+
+        public static ExecutionEvent completed(
+                String toolCallId,
+                String command,
+                String status,
+                long startedAt,
+                long completedAt,
+                int outputLength,
+                String errorMessage) {
+            return new ExecutionEvent(
+                    toolCallId,
+                    command,
+                    status,
+                    startedAt,
+                    completedAt,
+                    outputLength,
+                    errorMessage
             );
         }
 
+        public String getToolCallId() {
+            return toolCallId;
+        }
+
+        public String getToolName() {
+            return toolName;
+        }
+
+        public String getCommand() {
+            return command;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public long getStartedAt() {
+            return startedAt;
+        }
+
+        public long getCompletedAt() {
+            return completedAt;
+        }
+
+        public long getDurationMs() {
+            return durationMs;
+        }
+
+        public int getOutputLength() {
+            return outputLength;
+        }
+
+        public String getErrorMessage() {
+            return errorMessage;
+        }
     }
 
     /**
