@@ -1,5 +1,6 @@
 package com.llf.ai.cases.react.factory;
 
+import com.llf.ai.api.dto.ReActResultDTO;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -9,7 +10,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * ReAct 动态上下文
@@ -20,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * - ReAct 循环状态（步数、工具调用计数）
  * - SSE 发射器
  * - 工具定义（ToolCallback[]）
+ * - ADK Runner / Session
  *
  * <p>ReAct 循环数据流：
  * <pre>
@@ -61,6 +65,17 @@ public class DefaultReActFactory {
 
         /** SSE 事件发射器 */
         private ResponseBodyEmitter emitter;
+
+        /** 当前是否需要发送流式事件 */
+        private boolean streaming;
+
+        /** 流式连接是否仍然有效 */
+        @Builder.Default
+        private AtomicBoolean streamActive = new AtomicBoolean(true);
+
+        /** SSE 事件序号 */
+        @Builder.Default
+        private AtomicLong eventSequence = new AtomicLong(0);
 
         // ══════════════════════════════════════════════════════════
         //  消息历史
@@ -141,7 +156,29 @@ public class DefaultReActFactory {
         // ══════════════════════════════════════════════════════════
 
         /** 最终结果 DTO */
-        private com.llf.ai.api.dto.ReActResultDTO result;
+        private ReActResultDTO result;
+
+        // ══════════════════════════════════════════════════════════
+        //  工具定义（参考 WaLiCode ai.ts）
+        // ══════════════════════════════════════════════════════════
+
+        /**
+         * 工具回调列表（从 ArmoryService 装配链路获取）
+         */
+        private org.springframework.ai.tool.ToolCallback[] toolCallbacks;
+
+        /**
+         * 是否使用 Anthropic 格式（tool_call_id vs tool_use_id）
+         */
+        private boolean useAnthropicFormat;
+
+        // ══════════════════════════════════════════════════════════
+        //  上下文记忆（Phase 1: 动态 Prompt 构建）
+        // ══════════════════════════════════════════════════════════
+
+        /** 最近执行的命令记录（用于注入到动态 Prompt 中） */
+        @Builder.Default
+        private List<String> recentCommands = new ArrayList<>();
 
         // ══════════════════════════════════════════════════════════
         //  辅助方法
@@ -149,6 +186,10 @@ public class DefaultReActFactory {
 
         public void incrementStep() {
             currentStep.incrementAndGet();
+        }
+
+        public long nextEventSequence() {
+            return eventSequence.incrementAndGet();
         }
 
         public int getStep() {
@@ -187,9 +228,19 @@ public class DefaultReActFactory {
         }
 
         public void appendToolMessage(String toolCallId, String content) {
-            Map<String, Object> msg = Map.of("role", "tool", "tool_call_id", toolCallId, "content", content);
+            Map<String, Object> msg = useAnthropicFormat
+                    ? Map.of("type", "tool_result", "tool_use_id", toolCallId, "content", content)
+                    : Map.of("role", "tool", "tool_call_id", toolCallId, "content", content);
+
             messageHistory.add(msg);
         }
 
+        public void addRecentCommand(String command) {
+            if (command == null || command.trim().isEmpty()) return;
+            recentCommands.add(command.trim());
+            while (recentCommands.size() > 20) {
+                recentCommands.remove(0);
+            }
+        }
     }
 }

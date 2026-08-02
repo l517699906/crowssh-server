@@ -40,6 +40,15 @@
             <groupId>com.llf.ai</groupId>
             <artifactId>crowssh-server-domain</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.llf.ai</groupId>
+            <artifactId>crowssh-server-case</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

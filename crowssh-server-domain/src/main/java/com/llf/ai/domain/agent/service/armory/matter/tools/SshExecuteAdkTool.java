@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
  * SSH 命令执行 ADK 工具，为智能体提供在 SSH 终端执行命令的能力
@@ -37,8 +38,14 @@ public class SshExecuteAdkTool {
     // AI session ID -> 当前 SSE 请求观察器。ToolContext 可稳定提供 session ID。
     private static final Map<String, ExecutionObserver> executionObserversBySession = new ConcurrentHashMap<>();
 
+    // 危险命令模式（需要用户确认），这些命令，也可以设计成配置来使用
+    private static final Pattern DANGEROUS_PATTERN = Pattern.compile(
+            "(?:\\brm\\s+-rf\\s+/|\\bdd\\s+if=|\\bmkfs\\.|:\\(\\)\\s*\\{|>\\s*/dev/sd|\\bchmod\\s+-R\\s+777\\s+/)",
+            Pattern.CASE_INSENSITIVE
+    );
+
     /**
-     * 设置当前线程的终端会话 ID
+     * 设置当前线程的终端会话 ID（兼容旧接口）
      */
     public static void setCurrentTerminalSession(String terminalSessionId) {
         currentTerminalSession.set(terminalSessionId);
@@ -126,6 +133,14 @@ public class SshExecuteAdkTool {
                     terminalSessionId, connectionId, terminalSession.getConnectionId());
             return failureResult(toolCallId, agentSessionId, command, startedAt,
                     "AI 对话绑定的服务器与当前 SSH 终端不一致");
+        }
+
+        if (DANGEROUS_PATTERN.matcher(command).find()) {
+            log.warn("[executeCommand] 危险命令被拦截: sessionId={}, terminalSessionId={}, command={}",
+                    agentSessionId, terminalSessionId, command);
+            return failureResult(toolCallId, agentSessionId, command, startedAt,
+                    "⚠️ 危险命令被拦截: " + command
+                            + "\n该命令可能导致系统损坏或数据丢失。如确需执行，请手动在终端操作。");
         }
 
         try {

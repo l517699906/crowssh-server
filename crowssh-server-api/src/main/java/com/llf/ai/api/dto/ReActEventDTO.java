@@ -12,6 +12,21 @@ import lombok.Data;
 @Data
 public class ReActEventDTO {
 
+    /** 事件协议版本 */
+    private int schemaVersion;
+
+    /** 事件唯一 ID */
+    private String eventId;
+
+    /** 会话内递增序号 */
+    private long sequence;
+
+    /** 事件时间戳 */
+    private long timestamp;
+
+    /** AI 对话会话 ID */
+    private String sessionId;
+
     /**
      * 事件类型
      * - text: 文本片断
@@ -38,6 +53,9 @@ public class ReActEventDTO {
      */
     private String toolName;
 
+    /** SSH 命令（工具执行事件时） */
+    private String command;
+
     /**
      * 工具调用状态（tool_call / tool_result 时）
      * - pending: 等待执行
@@ -51,6 +69,30 @@ public class ReActEventDTO {
      * 完整文本（累积，event=text 时）
      */
     private String fullText;
+
+    /** 工具开始时间 */
+    private Long startedAt;
+
+    /** 工具完成时间 */
+    private Long completedAt;
+
+    /** 工具执行耗时 */
+    private Long durationMs;
+
+    /** 工具输出长度 */
+    private Integer outputLength;
+
+    /** 工具执行错误 */
+    private String errorMessage;
+
+    /** ReAct 终止原因 */
+    private String stopReason;
+
+    /** 错误码 */
+    private String code;
+
+    /** 错误是否可重试 */
+    private Boolean retryable;
 
     /**
      * 步数信息（round_end 时）

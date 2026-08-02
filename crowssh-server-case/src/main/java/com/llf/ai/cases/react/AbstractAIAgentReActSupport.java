@@ -4,16 +4,15 @@ import cn.bugstack.wrench.design.framework.tree.AbstractMultiThreadStrategyRoute
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llf.ai.api.dto.ChatRequestDTO;
-import com.llf.ai.api.dto.ReActEventDTO;
 import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 import javax.annotation.Resource;
+import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -44,6 +43,9 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     @Resource
     protected ApplicationContext applicationContext;
 
+    @Resource
+    protected ReActStreamEventPublisher streamEventPublisher;
+
     protected final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -64,9 +66,8 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     /**
      * 通用的 Bean 获取
      */
-    @SuppressWarnings("unchecked")
     protected <T> T getBean(String beanName) {
-        return (T) applicationContext.getBean(beanName);
+        return applicationContext.getBean(beanName, (Class<T>) Object.class);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -126,86 +127,54 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     /**
      * 发送文本事件
      */
-    protected void sendTextEvent(ResponseBodyEmitter emitter, String content, String fullText) {
-        try {
-            ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("text");
-            event.setContent(content);
-            event.setFullText(fullText);
-            emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送文本事件 {}", event);
-        } catch (Exception e) {
-            log.warn("发送文本事件失败: {}", e.getMessage());
-        }
+    protected void sendTextEvent(
+            DefaultReActFactory.DynamicContext dynamicContext,
+            String content,
+            String fullText
+    ) throws IOException {
+        streamEventPublisher.sendText(dynamicContext, content, fullText);
     }
 
     /**
      * 发送工具调用事件
      */
-    protected void sendToolCallEvent(ResponseBodyEmitter emitter, String toolCallId, String toolName, String status) {
-        try {
-            ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("tool_call");
-            event.setToolCallId(toolCallId);
-            event.setToolName(toolName);
-            event.setStatus(status);
-            emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送工具调用事件 {}", event);
-        } catch (Exception e) {
-            log.warn("发送工具调用事件失败: {}", e.getMessage());
-        }
+    protected void sendToolCallEvent(
+            DefaultReActFactory.DynamicContext dynamicContext,
+            String toolCallId,
+            String toolName,
+            String status
+    ) throws IOException {
+        streamEventPublisher.sendToolCall(dynamicContext, toolCallId, toolName, status);
     }
 
     /**
      * 发送工具结果事件
      */
-    protected void sendToolResultEvent(ResponseBodyEmitter emitter, String toolCallId, String content, String status) {
-        try {
-            ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("tool_result");
-            event.setToolCallId(toolCallId);
-            event.setContent(content);
-            event.setStatus(status);
-            emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送工具结果事件 {}", event);
-        } catch (Exception e) {
-            log.warn("发送工具结果事件失败: {}", e.getMessage());
-        }
+    protected void sendToolResultEvent(
+            DefaultReActFactory.DynamicContext dynamicContext,
+            String toolCallId,
+            String content,
+            String status
+    ) throws IOException {
+        streamEventPublisher.sendToolResult(dynamicContext, toolCallId, content, status);
     }
 
     /**
      * 发送步数结束事件
      */
-    protected void sendRoundEndEvent(ResponseBodyEmitter emitter, int currentStep, int maxSteps, boolean shouldContinue, int totalToolCalls) {
-        try {
-            ReActEventDTO.StepInfo stepInfo = new ReActEventDTO.StepInfo();
-            stepInfo.setCurrentStep(currentStep);
-            stepInfo.setMaxSteps(maxSteps);
-            stepInfo.setShouldContinue(shouldContinue);
-            stepInfo.setTotalToolCalls(totalToolCalls);
-
-            ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("round_end");
-            event.setStepInfo(stepInfo);
-            emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送 round_end 事件 {}", event);
-        } catch (Exception e) {
-            log.warn("发送 round_end 事件失败: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * 发送完成事件
-     */
-    protected void sendDoneEvent(ResponseBodyEmitter emitter, ReActResultDTO result) {
-        try {
-            ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("done");
-            event.setContent(objectMapper.writeValueAsString(result));
-            emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送 done 事件 {}", event);
-        } catch (Exception e) {
-            log.warn("发送 done 事件失败: {}", e.getMessage());
-        }
+    protected void sendRoundEndEvent(
+            DefaultReActFactory.DynamicContext dynamicContext,
+            int currentStep,
+            int maxSteps,
+            boolean shouldContinue,
+            int totalToolCalls
+    ) throws IOException {
+        streamEventPublisher.sendRoundEnd(
+                dynamicContext,
+                currentStep,
+                maxSteps,
+                shouldContinue,
+                totalToolCalls
+        );
     }
 }

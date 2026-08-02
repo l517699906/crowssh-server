@@ -10,6 +10,17 @@
     <artifactId>crowssh-server-domain</artifactId>
 
     <dependencies>
+        <!-- xfg-wrench 3.0.0 内嵌了旧版日志类，测试时优先使用 Spring Boot 管理的 Logback 版本 -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>cn.bugstack.wrench</groupId>
             <artifactId>xfg-wrench-starter-design-framework</artifactId>

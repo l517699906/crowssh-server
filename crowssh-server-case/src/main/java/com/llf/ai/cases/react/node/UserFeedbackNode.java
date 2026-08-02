@@ -7,20 +7,17 @@ import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 /**
- * ReAct 用户反馈节点（结果发送 + 清理）
+ * ReAct 用户反馈节点（结果封装 + 清理）
  *
  * <p>职责：
  * 1. 构建最终 ReActResultDTO
- * 2. 发送 done SSE 事件
- * 3. 关闭 Emitter
- * 4. 清理 ThreadLocal 上下文
+ * 2. 清理 ThreadLocal 上下文
  *
  * <p>这是 ReAct 循环链路的终点，负责：
  * - 将累积的响应文本封装为最终结果
- * - 通过 SSE 发送 done 事件通知前端
+ * - 由 case 层统一完成 SSE 结果发送
  * - 清理终端会话绑定
  *
  * @author llf
@@ -33,17 +30,8 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
         log.info("ReAct UserFeedbackNode - 发送最终结果");
 
-        ResponseBodyEmitter emitter = dynamicContext.getEmitter();
-
         try {
-            // 1. 构建最终结果
             ReActResultDTO result = buildFinalResult(dynamicContext);
-
-            // 2. 发送 done SSE 事件
-            sendDoneEvent(emitter, result);
-
-            // 3. 关闭 emitter
-            emitter.complete();
 
             log.info("ReAct 完成 - 步数: {}, 工具调用: {}, 停止原因: {}",
                     result.getTotalSteps(),
@@ -53,14 +41,9 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
             return result;
 
         } catch (Exception e) {
-            log.error("ReAct UserFeedbackNode 发送失败", e);
-            try {
-                emitter.completeWithError(e);
-            } catch (Exception ignored) {
-            }
+            log.error("ReAct UserFeedbackNode 结果封装失败", e);
             throw e;
         } finally {
-            // 4. 清理上下文
             cleanup(dynamicContext);
         }
     }
@@ -99,6 +82,7 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
                 .stopReason(stopReason)
                 .toolCalls(dynamicContext.getCurrentToolCalls())
                 .toolResults(dynamicContext.getCurrentToolResults())
+                .error(dynamicContext.getErrorMessage())
                 .build();
     }
 
