@@ -1,6 +1,8 @@
 package com.llf.ai.domain.agent.service.armory.matter.tools;
 
 import com.google.adk.tools.Annotations;
+import com.google.adk.tools.ToolContext;
+import com.llf.ai.domain.ssh.adapter.port.TerminalSessionEntity;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,25 +25,23 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class SshExecuteAdkTool {
 
+    public static final String TERMINAL_SESSION_ID_STATE_KEY = "crowssh:terminalSessionId";
+    public static final String CONNECTION_ID_STATE_KEY = "crowssh:connectionId";
+
     @Resource
     private ISshTerminalService sshTerminalService;
 
-    // 当前线程的终端会话 ID（使用 InheritableThreadLocal 支持异步线程继承）
+    // 仅保留给 case 层的同步直调路径；生产 ADK 工具从 ToolContext 读取资源绑定。
     private static final InheritableThreadLocal<String> currentTerminalSession = new InheritableThreadLocal<>();
 
-    // 工具执行观察器用于将可验证的执行状态转发给当前 SSE 请求，不传递完整终端输出
-    private static final InheritableThreadLocal<ExecutionObserver> currentExecutionObserver = new InheritableThreadLocal<>();
-    private static final Map<String, ExecutionObserver> executionObserversByTerminal = new ConcurrentHashMap<>();
-
-    /** 当前会话级终端会话ID（由 Controller 设置，优先级低于 ThreadLocal） */
-    private static volatile String sessionTerminalSessionId;
+    // AI session ID -> 当前 SSE 请求观察器。ToolContext 可稳定提供 session ID。
+    private static final Map<String, ExecutionObserver> executionObserversBySession = new ConcurrentHashMap<>();
 
     /**
      * 设置当前线程的终端会话 ID
      */
     public static void setCurrentTerminalSession(String terminalSessionId) {
         currentTerminalSession.set(terminalSessionId);
-        sessionTerminalSessionId = terminalSessionId;
         log.info("[ThreadLocal] 设置终端会话: thread={}, terminalSession={}",
                 Thread.currentThread().getName(), terminalSessionId);
     }
@@ -51,54 +51,81 @@ public class SshExecuteAdkTool {
      */
     public static void clearCurrentTerminalSession() {
         currentTerminalSession.remove();
-        sessionTerminalSessionId = null;
     }
 
-    public static void setExecutionObserver(String terminalSessionId, ExecutionObserver observer) {
-        currentExecutionObserver.set(observer);
-        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
-            executionObserversByTerminal.put(terminalSessionId, observer);
+    public static void setExecutionObserver(String agentSessionId, ExecutionObserver observer) {
+        if (agentSessionId != null && !agentSessionId.isEmpty()) {
+            executionObserversBySession.put(agentSessionId, observer);
         }
     }
 
-    public static void clearExecutionObserver(String terminalSessionId, ExecutionObserver observer) {
-        currentExecutionObserver.remove();
-        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
-            executionObserversByTerminal.remove(terminalSessionId, observer);
+    public static void clearExecutionObserver(String agentSessionId, ExecutionObserver observer) {
+        if (agentSessionId != null && !agentSessionId.isEmpty()) {
+            executionObserversBySession.remove(agentSessionId, observer);
         }
     }
 
+    @Annotations.Schema(
+            name = "executeCommand",
+            description = "在当前 AI 对话绑定的 SSH 终端中执行 Shell 命令"
+    )
+    public Map<String, Object> executeCommandWithContext(
+            @Annotations.Schema(name = "command", description = "要执行的 Shell 命令，如: ls -la, apt install docker.io, docker --version")
+            String command,
+            @Annotations.Schema(name = "toolContext", description = "ADK 工具调用上下文")
+            ToolContext toolContext) {
+        String terminalSessionId = stateValue(toolContext, TERMINAL_SESSION_ID_STATE_KEY);
+        String connectionId = stateValue(toolContext, CONNECTION_ID_STATE_KEY);
+        return executeBoundCommand(command, terminalSessionId, connectionId, toolContext.sessionId());
+    }
+
+    /**
+     * case 层同步直调的兼容入口。没有线程绑定时直接拒绝，不再回退到全局会话。
+     */
     public Map<String, Object> executeCommand(
             @Annotations.Schema(name = "command", description = "要执行的 Shell 命令，如: ls -la, apt install docker.io, docker --version")
             String command) {
+        String terminalSessionId = currentTerminalSession.get();
+        TerminalSessionEntity terminalSession = terminalSessionId == null
+                ? null
+                : sshTerminalService.getTerminalSession(terminalSessionId);
+        String connectionId = terminalSession == null ? null : terminalSession.getConnectionId();
+        return executeBoundCommand(command, terminalSessionId, connectionId, null);
+    }
+
+    private Map<String, Object> executeBoundCommand(
+            String command,
+            String terminalSessionId,
+            String connectionId,
+            String agentSessionId
+    ) {
 
         String toolCallId = "call_" + UUID.randomUUID();
         long startedAt = System.currentTimeMillis();
 
-        // 优先从 ThreadLocal 获取，支持异步线程继承
-        String terminalSessionId = currentTerminalSession.get();
+        log.info("[executeCommand] sessionId={}, terminalSessionId={}, connectionId={}, command={}",
+                agentSessionId, terminalSessionId, connectionId, command);
 
-        // ThreadLocal 为空时回退到会话级变量（线程池场景下 ThreadLocal 可能失效）
-        if (terminalSessionId == null || terminalSessionId.isEmpty()) {
-            terminalSessionId = sessionTerminalSessionId;
-            log.info("[executeCommand] ThreadLocal 为空，回退到会话级变量: terminalSessionId={}", terminalSessionId);
-        }
-
-        log.info("[executeCommand] thread={}, terminalSessionId={}, command={}",
-                Thread.currentThread().getName(), terminalSessionId, command);
-
-        notifyObserver(terminalSessionId, ExecutionEvent.running(toolCallId, command, startedAt));
+        notifyObserver(agentSessionId, ExecutionEvent.running(toolCallId, command, startedAt));
 
         if (terminalSessionId == null || terminalSessionId.isEmpty()) {
             log.warn("[executeCommand] 终端会话ID为空，无法执行命令");
-            return failureResult(toolCallId, terminalSessionId, command, startedAt,
+            return failureResult(toolCallId, agentSessionId, command, startedAt,
                     "未绑定 SSH 终端会话。请先打开 SSH 终端连接。");
         }
 
-        if (!sshTerminalService.sessionExists(terminalSessionId)) {
+        TerminalSessionEntity terminalSession = sshTerminalService.getTerminalSession(terminalSessionId);
+        if (terminalSession == null || !terminalSession.isActive()) {
             log.warn("[executeCommand] 终端会话不存在: {}", terminalSessionId);
-            return failureResult(toolCallId, terminalSessionId, command, startedAt,
+            return failureResult(toolCallId, agentSessionId, command, startedAt,
                     "SSH 终端会话不存在或已关闭: " + terminalSessionId);
+        }
+        if (connectionId == null || connectionId.isBlank()
+                || !connectionId.equals(terminalSession.getConnectionId())) {
+            log.warn("[executeCommand] 终端归属校验失败: terminalSessionId={}, expectedConnectionId={}, actualConnectionId={}",
+                    terminalSessionId, connectionId, terminalSession.getConnectionId());
+            return failureResult(toolCallId, agentSessionId, command, startedAt,
+                    "AI 对话绑定的服务器与当前 SSH 终端不一致");
         }
 
         try {
@@ -125,7 +152,7 @@ public class SshExecuteAdkTool {
             }
 
             long completedAt = System.currentTimeMillis();
-            notifyObserver(terminalSessionId, ExecutionEvent.completed(
+            notifyObserver(agentSessionId, ExecutionEvent.completed(
                     toolCallId,
                     command,
                     success ? "success" : "error",
@@ -139,7 +166,7 @@ public class SshExecuteAdkTool {
 
         } catch (Exception e) {
             log.error("SSH 命令执行异常: session={}, command={}", terminalSessionId, command, e);
-            return failureResult(toolCallId, terminalSessionId, command, startedAt,
+            return failureResult(toolCallId, agentSessionId, command, startedAt,
                     "命令执行异常: " + e.getMessage());
         }
 
@@ -147,12 +174,12 @@ public class SshExecuteAdkTool {
 
     private Map<String, Object> failureResult(
             String toolCallId,
-            String terminalSessionId,
+            String agentSessionId,
             String command,
             long startedAt,
             String message) {
         long completedAt = System.currentTimeMillis();
-        notifyObserver(terminalSessionId, ExecutionEvent.completed(
+        notifyObserver(agentSessionId, ExecutionEvent.completed(
                 toolCallId,
                 command,
                 "error",
@@ -168,14 +195,18 @@ public class SshExecuteAdkTool {
         );
     }
 
-    private void notifyObserver(String terminalSessionId, ExecutionEvent event) {
-        ExecutionObserver observer = null;
-        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
-            observer = executionObserversByTerminal.get(terminalSessionId);
+    private static String stateValue(ToolContext toolContext, String key) {
+        Object value = toolContext.state().get(key);
+        if (value == null || value.toString().isBlank()) {
+            return null;
         }
-        if (observer == null) {
-            observer = currentExecutionObserver.get();
-        }
+        return value.toString();
+    }
+
+    private void notifyObserver(String agentSessionId, ExecutionEvent event) {
+        ExecutionObserver observer = agentSessionId == null
+                ? null
+                : executionObserversBySession.get(agentSessionId);
         if (observer == null) {
             return;
         }

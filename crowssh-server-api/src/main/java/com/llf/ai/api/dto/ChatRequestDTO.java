@@ -20,6 +20,11 @@ public class ChatRequestDTO {
     private String terminalSessionId;
 
     /**
+     * SSH 连接 ID，用于校验终端会话确实属于当前服务器。
+     */
+    private String connectionId;
+
+    /**
      * 客户端临时提供的模型配置，仅在本次请求期间使用，不做持久化。
      */
     private RuntimeModelConfigDTO runtimeModel;

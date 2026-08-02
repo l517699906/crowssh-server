@@ -51,7 +51,7 @@ public class AgentNode extends AbstractArmorySupport {
             // 添加 SSH 执行工具（ADK 原生 FunctionTool）
             try {
                 log.info("开始创建 SSH 执行工具, sshExecuteAdkTool={}", sshExecuteAdkTool);
-                FunctionTool sshTool = FunctionTool.create(sshExecuteAdkTool, "executeCommand");
+                FunctionTool sshTool = FunctionTool.create(sshExecuteAdkTool, "executeCommandWithContext");
                 log.info("FunctionTool 创建成功: name={}, declaration={}",
                         sshTool.name(),
                         sshTool.declaration().isPresent() ? sshTool.declaration().get() : "null");

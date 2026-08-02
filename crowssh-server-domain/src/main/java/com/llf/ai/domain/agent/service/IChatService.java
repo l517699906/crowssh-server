@@ -23,6 +23,11 @@ public interface IChatService {
     String createSession(String agentId, String userId);
 
     /**
+     * 创建绑定到指定 SSH 连接的独立会话。
+     */
+    String createSession(String agentId, String userId, String connectionId, String terminalSessionId);
+
+    /**
      * 处理消息
      * @param agentId 智能体ID
      * @param userId 用户ID
@@ -50,15 +55,34 @@ public interface IChatService {
     Flowable<Event> handleMessageStream(String agentId, String userId, String sessionId, String message);
 
     /**
+     * 处理消息（流式，兼容仅提供终端会话的调用方）。
+     */
+    Flowable<Event> handleMessageStream(
+            String agentId,
+            String userId,
+            String sessionId,
+            String message,
+            String terminalSessionId
+    );
+
+    /**
      * 处理消息（流式）
      * @param agentId 智能体ID
      * @param userId 用户ID
      * @param sessionId 会话ID
      * @param message 消息内容
      * @param terminalSessionId SSH终端会话ID（用于MCP工具调用）
+     * @param connectionId SSH连接ID（用于校验终端归属）
      * @return 事件流
      */
-    Flowable<Event> handleMessageStream(String agentId, String userId, String sessionId, String message, String terminalSessionId);
+    Flowable<Event> handleMessageStream(
+            String agentId,
+            String userId,
+            String sessionId,
+            String message,
+            String terminalSessionId,
+            String connectionId
+    );
 
     /**
      * 处理消息（流式）

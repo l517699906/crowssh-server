@@ -1,5 +1,7 @@
 package com.llf.ai.domain.agent.service.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llf.ai.domain.agent.model.valobj.RuntimeModelConfig;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
@@ -7,15 +9,39 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeSet;
 
 @Service
 public class RuntimeChatModelService {
 
     private static final Set<String> PROVIDERS = Set.of("openai", "deepseek", "openai-compatible");
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(12);
+    private static final int MAX_MODEL_RESPONSE_BYTES = 1024 * 1024;
+    private static final int MAX_MODEL_COUNT = 500;
+    private static final int MAX_MODEL_ID_LENGTH = 200;
+
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
+
+    public RuntimeChatModelService() {
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(CONNECT_TIMEOUT)
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+        this.objectMapper = new ObjectMapper();
+    }
 
     public RuntimeChatModelScope open(RuntimeModelConfig config) {
         RuntimeChatModelContext.set(build(config));
@@ -26,12 +52,44 @@ public class RuntimeChatModelService {
         build(config).call("Reply only with OK");
     }
 
+    public List<String> listModels(RuntimeModelConfig config) {
+        ValidatedConnection connection = validateConnection(config);
+        URI modelsUri = URI.create(connection.baseUrl() + "/v1/models");
+        HttpRequest request = HttpRequest.newBuilder(modelsUri)
+                .timeout(REQUEST_TIMEOUT)
+                .header("Accept", "application/json")
+                .header("Authorization", "Bearer " + connection.apiKey())
+                .GET()
+                .build();
+
+        try {
+            HttpResponse<InputStream> response = httpClient.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofInputStream()
+            );
+            try (InputStream body = response.body()) {
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IllegalArgumentException(
+                            "模型列表查询失败（HTTP " + response.statusCode() + "）"
+                    );
+                }
+                return parseModelIds(readBounded(body));
+            }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalArgumentException("模型列表查询已中断");
+        } catch (IOException error) {
+            throw new IllegalArgumentException("无法连接 AI 服务商的模型列表接口");
+        }
+    }
+
     private ChatModel build(RuntimeModelConfig config) {
-        validate(config);
+        ValidatedConnection connection = validateConnection(config);
+        validateGeneration(config);
 
         OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(normalizeBaseUrl(config.getBaseUrl()))
-                .apiKey(config.getApiKey().trim())
+                .baseUrl(connection.baseUrl())
+                .apiKey(connection.apiKey())
                 .completionsPath("/v1/chat/completions")
                 .embeddingsPath("/v1/embeddings")
                 .build();
@@ -49,7 +107,7 @@ public class RuntimeChatModelService {
                 .build();
     }
 
-    private void validate(RuntimeModelConfig config) {
+    private ValidatedConnection validateConnection(RuntimeModelConfig config) {
         if (config == null) {
             throw new IllegalArgumentException("未提供客户端 AI 配置");
         }
@@ -60,18 +118,8 @@ public class RuntimeChatModelService {
         }
 
         String apiKey = required(config.getApiKey(), "API Key");
-        String model = required(config.getModel(), "模型");
-        if (apiKey.length() > 8192 || model.length() > 200) {
-            throw new IllegalArgumentException("AI 配置字段长度超出限制");
-        }
-
-        Double temperature = config.getTemperature();
-        if (temperature != null && (temperature < 0 || temperature > 2)) {
-            throw new IllegalArgumentException("Temperature 必须在 0 到 2 之间");
-        }
-        Integer maxTokens = config.getMaxTokens();
-        if (maxTokens != null && (maxTokens < 1 || maxTokens > 131072)) {
-            throw new IllegalArgumentException("最大输出 Token 必须在 1 到 131072 之间");
+        if (apiKey.length() > 8192) {
+            throw new IllegalArgumentException("API Key 长度超出限制");
         }
 
         URI uri = parseHttpsUri(config.getBaseUrl());
@@ -83,6 +131,23 @@ public class RuntimeChatModelService {
             throw new IllegalArgumentException("DeepSeek 服务商地址必须为 api.deepseek.com");
         }
         validatePublicHost(host);
+        return new ValidatedConnection(normalizeBaseUrl(config.getBaseUrl()), apiKey);
+    }
+
+    private void validateGeneration(RuntimeModelConfig config) {
+        String model = required(config.getModel(), "模型");
+        if (model.length() > MAX_MODEL_ID_LENGTH) {
+            throw new IllegalArgumentException("模型名称长度超出限制");
+        }
+
+        Double temperature = config.getTemperature();
+        if (temperature != null && (temperature < 0 || temperature > 2)) {
+            throw new IllegalArgumentException("Temperature 必须在 0 到 2 之间");
+        }
+        Integer maxTokens = config.getMaxTokens();
+        if (maxTokens != null && (maxTokens < 1 || maxTokens > 131072)) {
+            throw new IllegalArgumentException("最大输出 Token 必须在 1 到 131072 之间");
+        }
     }
 
     private URI parseHttpsUri(String baseUrl) {
@@ -138,10 +203,47 @@ public class RuntimeChatModelService {
                 : value;
     }
 
+    private byte[] readBounded(InputStream body) throws IOException {
+        byte[] bytes = body.readNBytes(MAX_MODEL_RESPONSE_BYTES + 1);
+        if (bytes.length > MAX_MODEL_RESPONSE_BYTES) {
+            throw new IllegalArgumentException("模型列表响应过大");
+        }
+        return bytes;
+    }
+
+    List<String> parseModelIds(byte[] payload) {
+        try {
+            JsonNode data = objectMapper.readTree(payload).path("data");
+            if (!data.isArray()) {
+                throw new IllegalArgumentException("模型列表响应格式无效");
+            }
+
+            Set<String> models = new TreeSet<>();
+            for (JsonNode item : data) {
+                String id = item.path("id").asText("").trim();
+                if (!id.isEmpty() && id.length() <= MAX_MODEL_ID_LENGTH) {
+                    models.add(id);
+                    if (models.size() >= MAX_MODEL_COUNT) {
+                        break;
+                    }
+                }
+            }
+            if (models.isEmpty()) {
+                throw new IllegalArgumentException("服务商未返回可用模型");
+            }
+            return List.copyOf(models);
+        } catch (IOException error) {
+            throw new IllegalArgumentException("模型列表响应格式无效");
+        }
+    }
+
     private String required(String value, String field) {
         if (value == null || value.trim().isEmpty()) {
             throw new IllegalArgumentException(field + "不能为空");
         }
         return value.trim();
+    }
+
+    private record ValidatedConnection(String baseUrl, String apiKey) {
     }
 }

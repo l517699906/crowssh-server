@@ -36,9 +36,6 @@ public class AgentServiceController implements IAgentService {
     private IChatService chatService;
 
     @Resource
-    private SshExecuteAdkTool sshExecuteAdkTool;
-
-    @Resource
     private RuntimeChatModelService runtimeChatModelService;
 
     @RequestMapping(value = "query_ai_agent_config_list", method = RequestMethod.GET)
@@ -81,8 +78,15 @@ public class AgentServiceController implements IAgentService {
     @Override
     public Response<CreateSessionResponseDTO> createSession(@RequestBody CreateSessionRequestDTO requestDTO) {
         try {
-            log.info("创建会话 agentId:{} userId:{}", requestDTO.getAgentId(), requestDTO.getUserId());
-            String sessionId = chatService.createSession(requestDTO.getAgentId(), requestDTO.getUserId());
+            log.info("创建会话 agentId:{} userId:{} connectionId:{} terminalSessionId:{}",
+                    requestDTO.getAgentId(), requestDTO.getUserId(), requestDTO.getConnectionId(),
+                    requestDTO.getTerminalSessionId());
+            String sessionId = chatService.createSession(
+                    requestDTO.getAgentId(),
+                    requestDTO.getUserId(),
+                    requestDTO.getConnectionId(),
+                    requestDTO.getTerminalSessionId()
+            );
 
             CreateSessionResponseDTO responseDTO = new CreateSessionResponseDTO();
             responseDTO.setSessionId(sessionId);
@@ -122,7 +126,12 @@ public class AgentServiceController implements IAgentService {
             log.info("智能体对话 agentId:{} userId:{}", requestDTO.getAgentId(), requestDTO.getUserId());
             String sessionId = requestDTO.getSessionId();
             if (sessionId == null || sessionId.isEmpty()) {
-                sessionId = chatService.createSession(requestDTO.getAgentId(), requestDTO.getUserId());
+                sessionId = chatService.createSession(
+                        requestDTO.getAgentId(),
+                        requestDTO.getUserId(),
+                        requestDTO.getConnectionId(),
+                        requestDTO.getTerminalSessionId()
+                );
             }
 
             List<String> messages = chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
@@ -159,15 +168,21 @@ public class AgentServiceController implements IAgentService {
         // MVP 简化版：直接使用 ChatService.handleMessageStream() 转发 SSE 事件
         // 将 ADK 事件流转为结构化 JSON SSE 事件，前端可区分文本和工具结果
         try {
-            log.info("MVP 流式对话 agentId:{} userId:{} sessionId:{} terminalSessionId:{} messageLength:{}",
+            log.info("MVP 流式对话 agentId:{} userId:{} sessionId:{} connectionId:{} terminalSessionId:{} messageLength:{}",
                     requestDTO.getAgentId(), requestDTO.getUserId(), requestDTO.getSessionId(),
+                    requestDTO.getConnectionId(),
                     requestDTO.getTerminalSessionId(),
                     requestDTO.getMessage() == null ? 0 : requestDTO.getMessage().length());
 
             // 如果未指定 sessionId，先创建
             String sessionId = requestDTO.getSessionId();
             if (sessionId == null || sessionId.isEmpty()) {
-                sessionId = chatService.createSession(requestDTO.getAgentId(), requestDTO.getUserId());
+                sessionId = chatService.createSession(
+                        requestDTO.getAgentId(),
+                        requestDTO.getUserId(),
+                        requestDTO.getConnectionId(),
+                        requestDTO.getTerminalSessionId()
+                );
             }
 
             // 创建 SSE 发射器（10 分钟超时，AI + SSH 命令执行可能需要较长时间）
@@ -246,7 +261,7 @@ public class AgentServiceController implements IAgentService {
                         cancelStream.run();
                     }
                 };
-                SshExecuteAdkTool.setExecutionObserver(terminalSessionId, executionObserver);
+                SshExecuteAdkTool.setExecutionObserver(finalSessionId, executionObserver);
 
                 // 心跳保活线程：在 AI 处理期间定期发送 SSE 注释行，防止浏览器/proxy 超时断开
                 Thread heartbeatThread = new Thread(() -> {
@@ -283,7 +298,8 @@ public class AgentServiceController implements IAgentService {
                             requestDTO.getUserId(),
                             finalSessionId,
                             requestDTO.getMessage(),
-                            terminalSessionId
+                            terminalSessionId,
+                            requestDTO.getConnectionId()
                     );
 
                     StringBuilder textAccumulator = new StringBuilder();
@@ -356,9 +372,7 @@ public class AgentServiceController implements IAgentService {
                 } finally {
                     streamActive.set(false);
                     heartbeatThread.interrupt();
-                    SshExecuteAdkTool.clearExecutionObserver(terminalSessionId, executionObserver);
-                    // 清理 ThreadLocal 和会话级变量
-                    SshExecuteAdkTool.clearCurrentTerminalSession();
+                    SshExecuteAdkTool.clearExecutionObserver(finalSessionId, executionObserver);
                     requestDTO.clearRuntimeSecret();
                 }
             }, "mvp-stream-" + sessionId);
