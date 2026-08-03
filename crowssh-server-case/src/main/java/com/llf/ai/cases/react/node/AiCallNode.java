@@ -71,11 +71,13 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 2. 重置当前轮次缓冲
         dynamicContext.resetRoundBuffers();
 
-        // 3. 绑定终端会话 ID，供手动工具执行的兼容路径使用
+        // 3. 显式绑定工具执行上下文。Spring AI 适配层不会向 ADK 工具传递 ToolContext。
         String terminalSessionId = dynamicContext.getTerminalSessionId();
-        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
-            SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-        }
+        SshExecuteAdkTool.setCurrentExecutionContext(
+                terminalSessionId,
+                requestParameter.getConnectionId(),
+                dynamicContext.getSessionId()
+        );
 
         // 4. 构建动态上下文并注入用户消息
         String enrichedMessage = buildEnrichedMessage(lastUserMessage, dynamicContext);
@@ -209,10 +211,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             dynamicContext.setErrorMessage(errorBuilder.toString());
             dynamicContext.setStopReason("error");
         } finally {
-            // 清除终端会话绑定
-            if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
-                SshExecuteAdkTool.clearCurrentTerminalSession();
-            }
+            // 请求结束后必须清除，避免线程复用时串用其他会话的 SSH 资源。
+            SshExecuteAdkTool.clearCurrentTerminalSession();
         }
 
         // 9. 更新步数和工具调用统计

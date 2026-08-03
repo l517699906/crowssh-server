@@ -37,7 +37,7 @@ public interface ITerminalSessionPort {
     /**
      * 执行命令并等待输出完成（用于 AI 工具调用）
      * <p>
-     * 写入命令 + 换行符，等待 Shell prompt 重新出现后返回完整输出。
+     * AI 命令由基础设施实现隔离到独立 SSH exec channel 中执行。
      * 与 write+read 不同，此方法会阻塞等待命令执行完成。
      *
      * @param sessionId 会话ID
@@ -46,6 +46,21 @@ public interface ITerminalSessionPort {
      * @return 命令执行后的完整终端输出
      */
     String executeCommandAndWait(String sessionId, String command, long timeoutMs);
+
+    /**
+     * 执行命令并返回结构化结果。
+     * <p>
+     * 新的基础设施实现会在独立 SSH exec channel 中执行命令并返回真实退出码。
+     * 默认实现保留旧适配器的兼容性，旧实现的退出码只能视为未知。
+     *
+     * @param sessionId 会话ID
+     * @param command   命令内容（不含换行符）
+     * @param timeoutMs 超时时间（毫秒）
+     * @return 命令输出、退出码和超时状态
+     */
+    default CommandExecutionResult executeCommandAndWaitResult(String sessionId, String command, long timeoutMs) {
+        return new CommandExecutionResult(executeCommandAndWait(sessionId, command, timeoutMs), 0, false);
+    }
 
     /**
      * 调整终端大小

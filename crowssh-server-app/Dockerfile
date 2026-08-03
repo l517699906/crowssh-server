@@ -1,17 +1,18 @@
-# 基础镜像，可以先执行 docker pull openjdk:17-jdk-slim
-FROM openjdk:17-jdk-slim
+# Java 17 运行时镜像
+ARG JAVA_BASE_IMAGE=docker.m.daocloud.io/library/eclipse-temurin:17-jre-jammy
+FROM ${JAVA_BASE_IMAGE}
 
-# 作者
-MAINTAINER llf
+LABEL org.opencontainers.image.authors="llf"
 
-# 配置
 ENV PARAMS=""
+ENV JAVA_OPTS=""
 
-# 时区
-ENV TZ=PRC
+ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# 添加应用
-ADD target/ai-agent-scaffold-app.jar /ai-agent-scaffold-app.jar
+WORKDIR /app
+COPY target/ai-agent-scaffold-app.jar /app/crowssh-server.jar
 
-ENTRYPOINT ["sh","-c","java -jar $JAVA_OPTS /ai-agent-scaffold-app.jar $PARAMS"]
+EXPOSE 8091
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/crowssh-server.jar $PARAMS"]

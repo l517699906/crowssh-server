@@ -28,6 +28,24 @@ public interface IChatService {
     String createSession(String agentId, String userId, String connectionId, String terminalSessionId);
 
     /**
+     * 恢复仍然有效的会话；如果服务端重启导致旧会话丢失，则创建新的会话。
+     *
+     * @param agentId             智能体 ID
+     * @param userId              用户 ID
+     * @param requestedSessionId  客户端历史记录中的会话 ID
+     * @param connectionId        SSH 连接 ID
+     * @param terminalSessionId   SSH 终端会话 ID
+     * @return 可用于本次请求的会话 ID
+     */
+    String resolveSession(
+            String agentId,
+            String userId,
+            String requestedSessionId,
+            String connectionId,
+            String terminalSessionId
+    );
+
+    /**
      * 处理消息
      * @param agentId 智能体ID
      * @param userId 用户ID

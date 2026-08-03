@@ -1,5 +1,6 @@
 package com.llf.ai.domain.ssh.service;
 
+import com.llf.ai.domain.ssh.adapter.port.CommandExecutionResult;
 import com.llf.ai.domain.ssh.adapter.port.TerminalSessionEntity;
 
 /**
@@ -28,6 +29,14 @@ public interface ISshTerminalService {
      * @return 命令执行后的终端输出
      */
     String executeCommand(String sessionId, String command);
+
+    /**
+     * 在隔离执行通道中执行命令并返回退出码，供 AI 工具判断命令是否真正成功。
+     * 旧实现默认将退出码视为未知；调用方不得将未知退出码判定为成功。
+     */
+    default CommandExecutionResult executeCommandWithResult(String sessionId, String command) {
+        return new CommandExecutionResult(executeCommand(sessionId, command), 0, false);
+    }
 
     /**
      * 调整终端大小

@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -91,6 +92,43 @@ public class ChatService implements IChatService {
     }
 
     @Override
+    public String resolveSession(
+            String agentId,
+            String userId,
+            String requestedSessionId,
+            String connectionId,
+            String terminalSessionId
+    ) {
+        String normalizedSessionId = normalize(requestedSessionId);
+        SshResourceContext resourceContext = resolveResourceContext(connectionId, terminalSessionId);
+
+        if (normalizedSessionId == null) {
+            return createSession(agentId, userId, resourceContext.connectionId(), resourceContext.terminalSessionId());
+        }
+
+        AiAgentRegisterVO registerVO = defaultArmoryFactory.getAiAgentRegisterVO(agentId);
+        if (registerVO == null) {
+            throw new AppException(ResponseCode.E0001.getCode());
+        }
+
+        ChatSessionBinding binding = sessionBindings.get(normalizedSessionId);
+        if (binding != null) {
+            // 已存在的绑定仍必须通过归属校验，不能把错误的用户/智能体/服务器 ID 当成“旧会话”恢复。
+            validateSessionBinding(normalizedSessionId, agentId, userId, resourceContext.connectionId());
+            if (adkSessionExists(registerVO.getRunner(), registerVO.getAppName(), userId, normalizedSessionId)) {
+                return normalizedSessionId;
+            }
+        }
+
+        log.info("AI 会话已失效，创建新会话 agentId={} userId={} oldSessionId={}",
+                agentId, userId, normalizedSessionId);
+        if (binding != null) {
+            sessionBindings.remove(normalizedSessionId, binding);
+        }
+        return createSession(agentId, userId, resourceContext.connectionId(), resourceContext.terminalSessionId());
+    }
+
+    @Override
     public List<String> handleMessage(String agentId, String userId, String message) {
 
         AiAgentRegisterVO aiAgentRegisterVO = defaultArmoryFactory.getAiAgentRegisterVO(agentId);
@@ -113,11 +151,10 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode());
         }
 
-        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
-        validateSessionBinding(sessionId, agentId, userId, null);
+        String resolvedSessionId = resolveSession(agentId, userId, sessionId, null, null);
 
         Content userMsg = Content.fromParts(Part.fromText(message));
-        Flowable<Event> events = runner.runAsync(userId, sessionId, userMsg);
+        Flowable<Event> events = aiAgentRegisterVO.getRunner().runAsync(userId, resolvedSessionId, userMsg);
 
         List<String> outputs = new ArrayList<>();
         events.blockingForEach(event -> outputs.add(event.stringifyContent()));
@@ -150,14 +187,19 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.E0001.getCode());
         }
 
-        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
-        SshResourceContext resourceContext = resolveResourceContext(connectionId, terminalSessionId);
-        validateSessionBinding(sessionId, agentId, userId, resourceContext.connectionId());
-
-        Content userMsg = Content.fromParts(Part.fromText(message));
-        return runner.runAsync(
+        String resolvedSessionId = resolveSession(
+                agentId,
                 userId,
                 sessionId,
+                connectionId,
+                terminalSessionId
+        );
+        SshResourceContext resourceContext = resolveResourceContext(connectionId, terminalSessionId);
+
+        Content userMsg = Content.fromParts(Part.fromText(message));
+        return aiAgentRegisterVO.getRunner().runAsync(
+                userId,
+                resolvedSessionId,
                 userMsg,
                 RunConfig.builder().build(),
                 resourceContext.toState()
@@ -207,6 +249,18 @@ public class ChatService implements IChatService {
                     current,
                     new ChatSessionBinding(agentId, userId, connectionId)
             );
+        }
+    }
+
+    private boolean adkSessionExists(InMemoryRunner runner, String appName, String userId, String sessionId) {
+        try {
+            Session session = runner.sessionService()
+                    .getSession(appName, userId, sessionId, Optional.empty())
+                    .blockingGet();
+            return session != null;
+        } catch (RuntimeException e) {
+            log.debug("检查 ADK 会话失败 sessionId={} reason={}", sessionId, e.getMessage());
+            return false;
         }
     }
 
@@ -266,15 +320,19 @@ public class ChatService implements IChatService {
 
         Content content = Content.builder().role("user").parts(parts).build();
 
-        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
-        validateSessionBinding(
-                chatCommandEntity.getSessionId(),
+        String resolvedSessionId = resolveSession(
                 chatCommandEntity.getAgentId(),
                 chatCommandEntity.getUserId(),
+                chatCommandEntity.getSessionId(),
+                null,
                 null
         );
 
-        Flowable<Event> events = runner.runAsync(chatCommandEntity.getUserId(), chatCommandEntity.getSessionId(), content);
+        Flowable<Event> events = aiAgentRegisterVO.getRunner().runAsync(
+                chatCommandEntity.getUserId(),
+                resolvedSessionId,
+                content
+        );
 
         List<String> outputs = new ArrayList<>();
         events.blockingForEach(event -> outputs.add(event.stringifyContent()));

@@ -199,16 +199,14 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     }
 
     private String ensureSession(ChatRequestDTO requestDTO) {
-        String sessionId = requestDTO.getSessionId();
-        if (sessionId == null || sessionId.isBlank()) {
-            sessionId = chatService.createSession(
-                    requestDTO.getAgentId(),
-                    requestDTO.getUserId(),
-                    requestDTO.getConnectionId(),
-                    requestDTO.getTerminalSessionId()
-            );
-            requestDTO.setSessionId(sessionId);
-        }
+        String sessionId = chatService.resolveSession(
+                requestDTO.getAgentId(),
+                requestDTO.getUserId(),
+                requestDTO.getSessionId(),
+                requestDTO.getConnectionId(),
+                requestDTO.getTerminalSessionId()
+        );
+        requestDTO.setSessionId(sessionId);
         return sessionId;
     }
 

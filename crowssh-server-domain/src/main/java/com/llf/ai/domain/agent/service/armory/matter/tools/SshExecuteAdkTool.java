@@ -2,6 +2,7 @@ package com.llf.ai.domain.agent.service.armory.matter.tools;
 
 import com.google.adk.tools.Annotations;
 import com.google.adk.tools.ToolContext;
+import com.llf.ai.domain.ssh.adapter.port.CommandExecutionResult;
 import com.llf.ai.domain.ssh.adapter.port.TerminalSessionEntity;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
 import lombok.extern.slf4j.Slf4j;
@@ -32,10 +33,10 @@ public class SshExecuteAdkTool {
     @Resource
     private ISshTerminalService sshTerminalService;
 
-    // 仅保留给 case 层的同步直调路径；生产 ADK 工具从 ToolContext 读取资源绑定。
-    private static final InheritableThreadLocal<String> currentTerminalSession = new InheritableThreadLocal<>();
+    // google-adk-spring-ai 1.2.0 转换工具时不会传递 ToolContext，因此由请求线程显式绑定执行资源。
+    private static final ThreadLocal<ExecutionBinding> currentExecutionBinding = new ThreadLocal<>();
 
-    // AI session ID -> 当前 SSE 请求观察器。ToolContext 可稳定提供 session ID。
+    // AI session ID -> 当前 SSE 请求观察器。请求绑定显式提供 session ID。
     private static final Map<String, ExecutionObserver> executionObserversBySession = new ConcurrentHashMap<>();
 
     // 危险命令模式（需要用户确认），这些命令，也可以设计成配置来使用
@@ -48,7 +49,16 @@ public class SshExecuteAdkTool {
      * 设置当前线程的终端会话 ID（兼容旧接口）
      */
     public static void setCurrentTerminalSession(String terminalSessionId) {
-        currentTerminalSession.set(terminalSessionId);
+        setCurrentExecutionContext(terminalSessionId, null, null);
+    }
+
+    /**
+     * 绑定当前 AI 请求使用的 SSH 资源和会话。
+     */
+    public static void setCurrentExecutionContext(String terminalSessionId,
+                                                  String connectionId,
+                                                  String agentSessionId) {
+        currentExecutionBinding.set(new ExecutionBinding(terminalSessionId, connectionId, agentSessionId));
         log.info("[ThreadLocal] 设置终端会话: thread={}, terminalSession={}",
                 Thread.currentThread().getName(), terminalSessionId);
     }
@@ -57,7 +67,7 @@ public class SshExecuteAdkTool {
      * 清除当前线程的终端会话 ID
      */
     public static void clearCurrentTerminalSession() {
-        currentTerminalSession.remove();
+        currentExecutionBinding.remove();
     }
 
     public static void setExecutionObserver(String agentSessionId, ExecutionObserver observer) {
@@ -74,13 +84,16 @@ public class SshExecuteAdkTool {
 
     @Annotations.Schema(
             name = "executeCommand",
-            description = "在当前 AI 对话绑定的 SSH 终端中执行 Shell 命令"
+            description = "在当前 AI 对话绑定的 SSH 连接上通过独立通道执行一条 Shell 命令；每次调用状态隔离"
     )
     public Map<String, Object> executeCommandWithContext(
-            @Annotations.Schema(name = "command", description = "要执行的 Shell 命令，如: ls -la, apt install docker.io, docker --version")
+            @Annotations.Schema(name = "command", description = "要执行的完整 Shell 命令；cd、export 等状态不会保留到下一次调用")
             String command,
             @Annotations.Schema(name = "toolContext", description = "ADK 工具调用上下文")
             ToolContext toolContext) {
+        if (toolContext == null) {
+            return executeCommand(command);
+        }
         String terminalSessionId = stateValue(toolContext, TERMINAL_SESSION_ID_STATE_KEY);
         String connectionId = stateValue(toolContext, CONNECTION_ID_STATE_KEY);
         return executeBoundCommand(command, terminalSessionId, connectionId, toolContext.sessionId());
@@ -89,15 +102,27 @@ public class SshExecuteAdkTool {
     /**
      * case 层同步直调的兼容入口。没有线程绑定时直接拒绝，不再回退到全局会话。
      */
+    @Annotations.Schema(
+            name = "executeCommand",
+            description = "在当前 AI 对话绑定的 SSH 连接上通过独立通道执行一条 Shell 命令；每次调用状态隔离"
+    )
     public Map<String, Object> executeCommand(
-            @Annotations.Schema(name = "command", description = "要执行的 Shell 命令，如: ls -la, apt install docker.io, docker --version")
+            @Annotations.Schema(name = "command", description = "要执行的完整 Shell 命令；cd、export 等状态不会保留到下一次调用")
             String command) {
-        String terminalSessionId = currentTerminalSession.get();
+        ExecutionBinding binding = currentExecutionBinding.get();
+        String terminalSessionId = binding == null ? null : binding.terminalSessionId();
         TerminalSessionEntity terminalSession = terminalSessionId == null
                 ? null
                 : sshTerminalService.getTerminalSession(terminalSessionId);
-        String connectionId = terminalSession == null ? null : terminalSession.getConnectionId();
-        return executeBoundCommand(command, terminalSessionId, connectionId, null);
+        String connectionId = binding == null ? null : binding.connectionId();
+        if ((connectionId == null || connectionId.isBlank()) && terminalSession != null) {
+            connectionId = terminalSession.getConnectionId();
+        }
+        String agentSessionId = binding == null ? null : binding.agentSessionId();
+        return executeBoundCommand(command, terminalSessionId, connectionId, agentSessionId);
+    }
+
+    private record ExecutionBinding(String terminalSessionId, String connectionId, String agentSessionId) {
     }
 
     private Map<String, Object> executeBoundCommand(
@@ -146,23 +171,35 @@ public class SshExecuteAdkTool {
         try {
             log.info("SSH 执行命令: session={}, command={}", terminalSessionId, command);
 
-            // 执行命令
-            String output = sshTerminalService.executeCommand(terminalSessionId, command);
+            // AI 命令通过隔离执行协议返回真实退出码，避免仅凭输出文本猜测成功与否。
+            CommandExecutionResult execution = sshTerminalService.executeCommandWithResult(
+                    terminalSessionId, command);
+            String output = execution.output();
 
-            log.info("SSH 命令执行完成: outputLength={}, output={}",
-                    output.length(), output.length() > 300 ? output.substring(0, 300) + "..." : output);
+            log.info("SSH 命令执行完成: outputLength={}, exitCode={}, timedOut={}, exitCodeKnown={}, output={}",
+                    output.length(), execution.exitCode(), execution.timedOut(), execution.exitCodeKnown(),
+                    output.length() > 300 ? output.substring(0, 300) + "..." : output);
 
-            // 分析输出，判断是否成功
-            boolean success = isExecutionSuccessful(output);
+            // 只有 SSH exec channel 明确返回 0 才能判定成功，未知退出码不能冒充成功。
+            boolean success = execution.isSuccess();
 
             Map<String, Object> result = new HashMap<>();
             result.put("command", command);
             result.put("output", output);
             result.put("success", success);
+            result.put("exitCode", execution.exitCode());
+            result.put("timedOut", execution.timedOut());
+            result.put("exitCodeKnown", execution.exitCodeKnown());
 
             String suggestion = null;
             if (!success) {
-                suggestion = analyzeError(output);
+                if (execution.timedOut()) {
+                    suggestion = "命令执行超时，独立执行通道已终止，交互终端仍保持打开。";
+                } else if (!execution.exitCodeKnown()) {
+                    suggestion = "SSH 服务端未返回明确退出码，不能确认命令成功，请检查连接和命令输出。";
+                } else {
+                    suggestion = analyzeError(output);
+                }
                 result.put("suggestion", suggestion);
             }
 
@@ -325,29 +362,6 @@ public class SshExecuteAdkTool {
         public String getErrorMessage() {
             return errorMessage;
         }
-    }
-
-    /**
-     * 判断命令执行是否成功
-     */
-    private boolean isExecutionSuccessful(String output) {
-        if (output == null || output.isEmpty()) {
-            return true;
-        }
-
-        String lowerOutput = output.toLowerCase();
-        String[] errorIndicators = {
-                "command not found", "no such file or directory", "permission denied",
-                "operation not permitted", "cannot find", "error:", "failed",
-                "fatal:", "unable to", "connection refused", "network is unreachable"
-        };
-
-        for (String indicator : errorIndicators) {
-            if (lowerOutput.contains(indicator)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**

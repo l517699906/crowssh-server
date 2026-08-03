@@ -2,6 +2,7 @@ package com.llf.ai.domain.ssh.service.terminal;
 
 import com.llf.ai.domain.ssh.adapter.port.ISshSessionPort;
 import com.llf.ai.domain.ssh.adapter.port.ITerminalSessionPort;
+import com.llf.ai.domain.ssh.adapter.port.CommandExecutionResult;
 import com.llf.ai.domain.ssh.adapter.port.TerminalSessionEntity;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class SshTerminalService implements ISshTerminalService {
+
+    /** AI 命令最长执行 8 分钟，部署脚本中的系统级 timeout 必须小于该值。 */
+    private static final long AI_COMMAND_TIMEOUT_MS = 480_000L;
 
     private final ISshSessionPort sshSessionService;
     private final ITerminalSessionPort terminalSessionService;
@@ -64,32 +68,46 @@ public class SshTerminalService implements ISshTerminalService {
 
     @Override
     public String executeCommand(String sessionId, String command) {
+        return executeCommandWithResult(sessionId, command).output();
+    }
+
+    @Override
+    public CommandExecutionResult executeCommandWithResult(String sessionId, String command) {
         log.debug("执行命令 sessionId={} command={}", sessionId, command);
 
         // 1. 校验会话
-        TerminalSessionEntity entity = sessionCache.get(sessionId);
-        if (entity == null || !entity.isActive()) {
+        TerminalSessionEntity entity = getActiveSession(sessionId);
+        if (entity == null) {
             throw new IllegalArgumentException("终端会话不存在或已关闭");
         }
 
-        // 2. 使用 executeCommandAndWait 等待命令执行完成
-        //    超时时间 30 秒（大部分命令应该能在 30 秒内完成）
-        String output = terminalSessionService.executeCommandAndWait(sessionId, command, 30000);
+        // 2. 使用独立 SSH exec channel 等待命令执行完成。
+        CommandExecutionResult result;
+        try {
+            result = terminalSessionService.executeCommandAndWaitResult(
+                    sessionId, command, AI_COMMAND_TIMEOUT_MS);
+        } catch (RuntimeException e) {
+            if (!terminalSessionService.sessionExists(sessionId)) {
+                invalidateSession(sessionId, entity);
+            }
+            throw e;
+        }
 
         // 3. 更新活跃时间
         entity.touch();
 
-        log.debug("命令执行完成 sessionId={} outputLength={}", sessionId, output.length());
+        log.debug("命令执行完成 sessionId={} outputLength={} exitCode={} timedOut={} exitCodeKnown={}",
+                sessionId, result.output().length(), result.exitCode(), result.timedOut(), result.exitCodeKnown());
 
-        return output;
+        return result;
     }
 
     @Override
     public void resizeTerminal(String sessionId, int cols, int rows) {
         log.debug("调整终端大小 sessionId={} cols={} rows={}", sessionId, cols, rows);
 
-        TerminalSessionEntity entity = sessionCache.get(sessionId);
-        if (entity == null || !entity.isActive()) {
+        TerminalSessionEntity entity = getActiveSession(sessionId);
+        if (entity == null) {
             throw new IllegalArgumentException("终端会话不存在或已关闭");
         }
 
@@ -102,7 +120,7 @@ public class SshTerminalService implements ISshTerminalService {
 
     @Override
     public TerminalSessionEntity getTerminalSession(String sessionId) {
-        return sessionCache.get(sessionId);
+        return getActiveSession(sessionId);
     }
 
     @Override
@@ -111,20 +129,21 @@ public class SshTerminalService implements ISshTerminalService {
 
         TerminalSessionEntity entity = sessionCache.remove(sessionId);
         if (entity != null) {
-            terminalSessionService.closeSession(sessionId);
-            log.info("终端会话已关闭 sessionId={}", sessionId);
+            entity.setStatus(2);
         }
+        terminalSessionService.closeSession(sessionId);
+        log.info("终端会话已关闭 sessionId={}", sessionId);
     }
 
     @Override
     public boolean sessionExists(String sessionId) {
-        return sessionCache.containsKey(sessionId);
+        return getActiveSession(sessionId) != null;
     }
 
     @Override
     public String readTerminal(String sessionId) {
-        TerminalSessionEntity entity = sessionCache.get(sessionId);
-        if (entity == null || !entity.isActive()) {
+        TerminalSessionEntity entity = getActiveSession(sessionId);
+        if (entity == null) {
             throw new IllegalArgumentException("终端会话不存在或已关闭");
         }
         return terminalSessionService.read(sessionId);
@@ -132,12 +151,35 @@ public class SshTerminalService implements ISshTerminalService {
 
     @Override
     public void writeTerminal(String sessionId, String input) {
-        TerminalSessionEntity entity = sessionCache.get(sessionId);
-        if (entity == null || !entity.isActive()) {
+        TerminalSessionEntity entity = getActiveSession(sessionId);
+        if (entity == null) {
             throw new IllegalArgumentException("终端会话不存在或已关闭");
         }
         terminalSessionService.write(sessionId, input);
         entity.touch();
+    }
+
+    private TerminalSessionEntity getActiveSession(String sessionId) {
+        TerminalSessionEntity entity = sessionCache.get(sessionId);
+        if (entity == null || !entity.isActive()) {
+            return null;
+        }
+        if (terminalSessionService.sessionExists(sessionId)) {
+            return entity;
+        }
+
+        invalidateSession(sessionId, entity);
+        return null;
+    }
+
+    private void invalidateSession(String sessionId, TerminalSessionEntity entity) {
+        if (!sessionCache.remove(sessionId, entity)) {
+            return;
+        }
+        entity.setStatus(2);
+        terminalSessionService.closeSession(sessionId);
+        log.warn("终端底层通道已失效，清理领域会话 sessionId={} connectionId={}",
+                sessionId, entity.getConnectionId());
     }
 
 }

@@ -114,15 +114,13 @@ public class AgentServiceController implements IAgentService {
     public Response<ChatResponseDTO> chat(@RequestBody ChatRequestDTO requestDTO) {
         try {
             log.info("智能体对话 agentId:{} userId:{}", requestDTO.getAgentId(), requestDTO.getUserId());
-            String sessionId = requestDTO.getSessionId();
-            if (sessionId == null || sessionId.isEmpty()) {
-                sessionId = chatService.createSession(
-                        requestDTO.getAgentId(),
-                        requestDTO.getUserId(),
-                        requestDTO.getConnectionId(),
-                        requestDTO.getTerminalSessionId()
-                );
-            }
+            String sessionId = chatService.resolveSession(
+                    requestDTO.getAgentId(),
+                    requestDTO.getUserId(),
+                    requestDTO.getSessionId(),
+                    requestDTO.getConnectionId(),
+                    requestDTO.getTerminalSessionId()
+            );
 
             List<String> messages = chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
 
