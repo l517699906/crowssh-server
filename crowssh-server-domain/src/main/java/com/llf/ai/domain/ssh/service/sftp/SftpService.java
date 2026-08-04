@@ -5,6 +5,7 @@ import com.llf.ai.domain.ssh.adapter.port.ISshSessionPort;
 import com.llf.ai.domain.ssh.adapter.port.SftpContentEntity;
 import com.llf.ai.domain.ssh.adapter.port.SftpFileEntity;
 import com.llf.ai.domain.ssh.service.ISftpService;
+import com.llf.ai.domain.ssh.service.ISshConnectionOwnershipService;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -17,6 +18,7 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class SftpService implements ISftpService {
@@ -28,28 +30,31 @@ public class SftpService implements ISftpService {
 
     private final ISshSessionPort sshSessionPort;
     private final ISftpSessionPort sftpSessionPort;
+    private final ISshConnectionOwnershipService sshConnectionOwnershipService;
 
-    public SftpService(ISshSessionPort sshSessionPort, ISftpSessionPort sftpSessionPort) {
+    public SftpService(ISshSessionPort sshSessionPort, ISftpSessionPort sftpSessionPort,
+                       ISshConnectionOwnershipService sshConnectionOwnershipService) {
         this.sshSessionPort = sshSessionPort;
         this.sftpSessionPort = sftpSessionPort;
+        this.sshConnectionOwnershipService = sshConnectionOwnershipService;
     }
 
     @Override
-    public String resolvePath(String connectionId, String path) {
-        requireConnected(connectionId);
+    public String resolvePath(String ownerId, String connectionId, String path) {
+        requireConnected(ownerId, connectionId);
         return sftpSessionPort.canonicalize(connectionId, normalizePath(path));
     }
 
     @Override
-    public List<SftpFileEntity> list(String connectionId, String path) {
-        requireConnected(connectionId);
+    public List<SftpFileEntity> list(String ownerId, String connectionId, String path) {
+        requireConnected(ownerId, connectionId);
         return sftpSessionPort.list(connectionId, path);
     }
 
     @Override
-    public void upload(String connectionId, String remotePath, String fileName,
+    public void upload(String ownerId, String connectionId, String remotePath, String fileName,
                        long size, InputStream inputStream) {
-        requireConnected(connectionId);
+        requireConnected(ownerId, connectionId);
         if (fileName == null || fileName.isBlank()) {
             throw new IllegalArgumentException("上传文件名不能为空");
         }
@@ -57,20 +62,84 @@ public class SftpService implements ISftpService {
     }
 
     @Override
-    public void download(String connectionId, String remotePath, OutputStream outputStream) {
-        requireConnected(connectionId);
+    public void download(String ownerId, String connectionId, String remotePath,
+                         OutputStream outputStream) {
+        requireConnected(ownerId, connectionId);
         sftpSessionPort.download(connectionId, remotePath, outputStream);
     }
 
     @Override
-    public long fileSize(String connectionId, String remotePath) {
-        requireConnected(connectionId);
+    public long fileSize(String ownerId, String connectionId, String remotePath) {
+        requireConnected(ownerId, connectionId);
         return sftpSessionPort.fileSize(connectionId, remotePath);
     }
 
     @Override
-    public SftpTextContentEntity readText(String connectionId, String remotePath) {
-        requireConnected(connectionId);
+    public void rename(String ownerId, String connectionId, String remotePath, String newName) {
+        requireConnected(ownerId, connectionId);
+        requireMutationPath(remotePath);
+        sftpSessionPort.rename(connectionId, remotePath, requireEntryName(newName, "新名称"));
+    }
+
+    @Override
+    public void createDirectory(String ownerId, String connectionId, String remotePath, String name) {
+        requireConnected(ownerId, connectionId);
+        requireMutationPath(remotePath);
+        sftpSessionPort.createDirectory(
+                connectionId, remotePath, requireEntryName(name, "文件夹名称"));
+    }
+
+    @Override
+    public void createFile(String ownerId, String connectionId, String remotePath, String name) {
+        requireConnected(ownerId, connectionId);
+        requireMutationPath(remotePath);
+        sftpSessionPort.createFile(connectionId, remotePath, requireEntryName(name, "文件名称"));
+    }
+
+    @Override
+    public void archive(String ownerId, String connectionId, String remotePath, String archiveName) {
+        requireConnected(ownerId, connectionId);
+        requireMutationPath(remotePath);
+        String validatedName = requireEntryName(archiveName, "压缩包名称");
+        if (!validatedName.toLowerCase(Locale.ROOT).endsWith(".tar.gz")) {
+            throw new IllegalArgumentException("压缩包名称必须以 .tar.gz 结尾");
+        }
+        sftpSessionPort.archive(connectionId, remotePath, validatedName);
+    }
+
+    @Override
+    public void extract(String ownerId, String connectionId, String remotePath, String directoryName) {
+        requireConnected(ownerId, connectionId);
+        requireMutationPath(remotePath);
+        sftpSessionPort.extract(
+                connectionId, remotePath, requireEntryName(directoryName, "目标文件夹名称"));
+    }
+
+    @Override
+    public void delete(String ownerId, String connectionId, String remotePath) {
+        requireConnected(ownerId, connectionId);
+        requireMutationPath(remotePath);
+        String normalized = remotePath.replace('\\', '/').replaceAll("/+$", "");
+        if (normalized.isBlank() || "/".equals(normalized)
+                || ".".equals(normalized) || "..".equals(normalized)) {
+            throw new IllegalArgumentException("禁止删除远程根目录");
+        }
+        sftpSessionPort.delete(connectionId, remotePath);
+    }
+
+    @Override
+    public void chmod(String ownerId, String connectionId, String remotePath, String permissions) {
+        requireConnected(ownerId, connectionId);
+        requireMutationPath(remotePath);
+        if (permissions == null || !permissions.matches("[0-7]{3,4}")) {
+            throw new IllegalArgumentException("权限必须是 3 或 4 位八进制数字");
+        }
+        sftpSessionPort.chmod(connectionId, remotePath, Integer.parseInt(permissions, 8));
+    }
+
+    @Override
+    public SftpTextContentEntity readText(String ownerId, String connectionId, String remotePath) {
+        requireConnected(ownerId, connectionId);
         requireRemotePath(remotePath);
         SftpContentEntity source = sftpSessionPort.readContent(
                 connectionId, remotePath, MAX_TEXT_FILE_SIZE);
@@ -87,10 +156,11 @@ public class SftpService implements ISftpService {
     }
 
     @Override
-    public SftpTextContentEntity saveText(String connectionId, String remotePath, String content,
+    public SftpTextContentEntity saveText(String ownerId, String connectionId, String remotePath,
+                                          String content,
                                           String expectedVersion, String encoding,
                                           String lineEnding) {
-        requireConnected(connectionId);
+        requireConnected(ownerId, connectionId);
         requireRemotePath(remotePath);
         if (content == null) {
             throw new IllegalArgumentException("文件内容不能为空");
@@ -118,9 +188,9 @@ public class SftpService implements ISftpService {
                 .build();
     }
 
-    private void requireConnected(String connectionId) {
-        if (connectionId == null || connectionId.isBlank()
-                || !sshSessionPort.isConnected(connectionId)) {
+    private void requireConnected(String ownerId, String connectionId) {
+        sshConnectionOwnershipService.requireOwnership(ownerId, connectionId);
+        if (!sshSessionPort.isConnected(connectionId)) {
             throw new IllegalStateException("SSH连接未建立，请先连接");
         }
     }
@@ -133,6 +203,32 @@ public class SftpService implements ISftpService {
         if (path == null || path.isBlank()) {
             throw new IllegalArgumentException("远程文件路径不能为空");
         }
+    }
+
+    private void requireMutationPath(String path) {
+        requireRemotePath(path);
+        String normalized = path.replace('\\', '/');
+        if (normalized.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("远程文件路径无效");
+        }
+        for (String segment : normalized.split("/")) {
+            if (".".equals(segment) || "..".equals(segment)) {
+                throw new IllegalArgumentException("远程文件路径不能包含父级或当前目录段");
+            }
+        }
+    }
+
+    private String requireEntryName(String name, String label) {
+        String normalized = name == null ? "" : name.trim();
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException(label + "不能为空");
+        }
+        if (".".equals(normalized) || "..".equals(normalized)
+                || normalized.indexOf('/') >= 0 || normalized.indexOf('\\') >= 0
+                || normalized.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException(label + "不能包含路径分隔符");
+        }
+        return normalized;
     }
 
     private DecodedText decodeText(byte[] bytes) {

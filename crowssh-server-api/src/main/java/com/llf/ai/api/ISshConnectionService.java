@@ -34,9 +34,14 @@ public interface ISshConnectionService {
     Response<SshConnectionResponseDTO> getConnection(String connectionId);
 
     /**
-     * 查询用户的所有连接
+     * 查询当前认证设备的所有连接
      */
-    Response<List<SshConnectionResponseDTO>> getConnectionList(String userId);
+    Response<List<SshConnectionResponseDTO>> getConnectionList();
+
+    /**
+     * 测试SSH连接，不保存连接
+     */
+    Response<Void> testConnection(SshConnectionRequestDTO requestDTO);
 
     /**
      * 建立SSH连接

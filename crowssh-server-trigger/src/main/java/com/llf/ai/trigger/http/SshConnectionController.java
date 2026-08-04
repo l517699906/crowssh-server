@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import java.security.Principal;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -25,8 +26,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/ssh")
-@CrossOrigin(origins = "*")
-public class SshConnectionController implements com.llf.ai.api.ISshConnectionService {
+public class SshConnectionController {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -34,15 +34,17 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
     private ISshConnectionService sshConnectionDomainService;
 
     @RequestMapping(value = "create_connection", method = RequestMethod.POST)
-    @Override
-    public Response<SshConnectionResponseDTO> createConnection(@RequestBody SshConnectionRequestDTO requestDTO) {
+    public Response<SshConnectionResponseDTO> createConnection(
+            @RequestBody SshConnectionRequestDTO requestDTO,
+            Principal principal
+    ) {
         try {
             log.info("创建SSH连接 name={} host={}", requestDTO.getConnectionName(), requestDTO.getHost());
 
             SshConnectionEntity entity = toEntity(requestDTO);
             SshConnectionConfigEntity configEntity = toConfigEntity(requestDTO);
 
-            sshConnectionDomainService.createConnection(entity, configEntity);
+            sshConnectionDomainService.createConnection(principal.getName(), entity, configEntity);
 
             return Response.<SshConnectionResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
@@ -65,23 +67,28 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
     }
 
     @RequestMapping(value = "update_connection", method = RequestMethod.POST)
-    @Override
-    public Response<SshConnectionResponseDTO> updateConnection(@RequestBody SshConnectionRequestDTO requestDTO) {
+    public Response<SshConnectionResponseDTO> updateConnection(
+            @RequestBody SshConnectionRequestDTO requestDTO,
+            Principal principal
+    ) {
         try {
             log.info("更新SSH连接 connectionId={}", requestDTO.getConnectionId());
 
             SshConnectionEntity entity = toEntity(requestDTO);
             SshConnectionConfigEntity configEntity = toConfigEntity(requestDTO);
 
-            sshConnectionDomainService.updateConnection(entity, configEntity);
+            String ownerId = principal.getName();
+            sshConnectionDomainService.updateConnection(ownerId, entity, configEntity);
 
             // 查询更新后的完整数据返回
-            SshConnectionEntity updated = sshConnectionDomainService.getConnection(entity.getConnectionId());
+            SshConnectionEntity updated = sshConnectionDomainService.getConnection(
+                    ownerId, entity.getConnectionId());
 
             return Response.<SshConnectionResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
-                    .data(toResponseDTO(updated, sshConnectionDomainService.getConnectionConfig(updated.getConnectionId())))
+                    .data(toResponseDTO(updated, sshConnectionDomainService.getConnectionConfig(
+                            ownerId, updated.getConnectionId())))
                     .build();
         } catch (IllegalArgumentException e) {
             log.warn("更新SSH连接参数错误: {}", e.getMessage());
@@ -99,11 +106,11 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
     }
 
     @RequestMapping(value = "delete_connection", method = RequestMethod.POST)
-    @Override
-    public Response<Void> deleteConnection(@RequestParam("connectionId") String connectionId) {
+    public Response<Void> deleteConnection(@RequestParam("connectionId") String connectionId,
+                                           Principal principal) {
         try {
             log.info("删除SSH连接 connectionId={}", connectionId);
-            sshConnectionDomainService.deleteConnection(connectionId);
+            sshConnectionDomainService.deleteConnection(principal.getName(), connectionId);
 
             return Response.<Void>builder()
                     .code(ResponseCode.SUCCESS.getCode())
@@ -125,11 +132,14 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
     }
 
     @RequestMapping(value = "get_connection", method = RequestMethod.GET)
-    @Override
-    public Response<SshConnectionResponseDTO> getConnection(@RequestParam("connectionId") String connectionId) {
+    public Response<SshConnectionResponseDTO> getConnection(
+            @RequestParam("connectionId") String connectionId,
+            Principal principal
+    ) {
         try {
             log.info("查询SSH连接 connectionId={}", connectionId);
-            SshConnectionEntity entity = sshConnectionDomainService.getConnection(connectionId);
+            String ownerId = principal.getName();
+            SshConnectionEntity entity = sshConnectionDomainService.getConnection(ownerId, connectionId);
 
             if (entity == null) {
                 return Response.<SshConnectionResponseDTO>builder()
@@ -141,7 +151,8 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
             return Response.<SshConnectionResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
-                    .data(toResponseDTO(entity, sshConnectionDomainService.getConnectionConfig(entity.getConnectionId())))
+                    .data(toResponseDTO(entity, sshConnectionDomainService.getConnectionConfig(
+                            ownerId, entity.getConnectionId())))
                     .build();
         } catch (Exception e) {
             log.error("查询SSH连接失败 connectionId={}", connectionId, e);
@@ -153,23 +164,25 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
     }
 
     @RequestMapping(value = "connection_list", method = RequestMethod.GET)
-    @Override
-    public Response<List<SshConnectionResponseDTO>> getConnectionList(@RequestParam(value = "userId", defaultValue = "default") String userId) {
+    public Response<List<SshConnectionResponseDTO>> getConnectionList(Principal principal) {
+        String ownerId = principal.getName();
         try {
-            log.info("查询SSH连接列表 userId={}", userId);
-            List<SshConnectionEntity> entities = sshConnectionDomainService.getConnectionList(userId);
+            log.info("查询SSH连接列表 ownerId={}", ownerId);
+            List<SshConnectionEntity> entities = sshConnectionDomainService.getConnectionList(ownerId);
 
             // 同步实际的连接状态
             List<SshConnectionResponseDTO> dtoList = entities.stream()
                     .map(entity -> {
                         // 检查实际的 SSH 连接状态
-                        boolean actuallyConnected = sshConnectionDomainService.isConnected(entity.getConnectionId());
+                        boolean actuallyConnected = sshConnectionDomainService.isConnected(
+                                ownerId, entity.getConnectionId());
                         if (actuallyConnected && entity.getStatus() != ConnectionStatusEnum.CONNECTED) {
                             entity.setStatus(ConnectionStatusEnum.CONNECTED);
                         } else if (!actuallyConnected && entity.getStatus() == ConnectionStatusEnum.CONNECTED) {
                             entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
                         }
-                        return toResponseDTO(entity, sshConnectionDomainService.getConnectionConfig(entity.getConnectionId()));
+                        return toResponseDTO(entity, sshConnectionDomainService.getConnectionConfig(
+                                ownerId, entity.getConnectionId()));
                     })
                     .collect(Collectors.toList());
 
@@ -179,7 +192,7 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
                     .data(dtoList)
                     .build();
         } catch (Exception e) {
-            log.error("查询SSH连接列表失败 userId={}", userId, e);
+            log.error("查询SSH连接列表失败 ownerId={}", ownerId, e);
             return Response.<List<SshConnectionResponseDTO>>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(ResponseCode.UN_ERROR.getInfo())
@@ -187,12 +200,47 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
         }
     }
 
+    @RequestMapping(value = "test_connection", method = RequestMethod.POST)
+    public Response<Void> testConnection(@RequestBody SshConnectionRequestDTO requestDTO) {
+        try {
+            log.info("测试SSH连接 host={}:{} user={}",
+                    requestDTO.getHost(), requestDTO.getPort(), requestDTO.getUsername());
+            sshConnectionDomainService.testConnection(
+                    toEntity(requestDTO),
+                    toConfigEntity(requestDTO));
+
+            return Response.<Void>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info("连接和认证均成功")
+                    .build();
+        } catch (IllegalArgumentException e) {
+            log.warn("测试SSH连接参数错误: {}", e.getMessage());
+            return Response.<Void>builder()
+                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                    .info(e.getMessage())
+                    .build();
+        } catch (IllegalStateException e) {
+            log.warn("测试SSH连接失败 host={}:{} error={}",
+                    requestDTO.getHost(), requestDTO.getPort(), e.getMessage());
+            return Response.<Void>builder()
+                    .code(ResponseCode.UN_ERROR.getCode())
+                    .info(e.getMessage())
+                    .build();
+        } catch (Exception e) {
+            log.error("测试SSH连接异常 host={}:{}", requestDTO.getHost(), requestDTO.getPort(), e);
+            return Response.<Void>builder()
+                    .code(ResponseCode.UN_ERROR.getCode())
+                    .info("连接测试失败: " + e.getMessage())
+                    .build();
+        }
+    }
+
     @RequestMapping(value = "connect", method = RequestMethod.POST)
-    @Override
-    public Response<Void> connect(@RequestParam("connectionId") String connectionId) {
+    public Response<Void> connect(@RequestParam("connectionId") String connectionId,
+                                  Principal principal) {
         try {
             log.info("建立SSH连接 connectionId={}", connectionId);
-            boolean success = sshConnectionDomainService.connect(connectionId);
+            boolean success = sshConnectionDomainService.connect(principal.getName(), connectionId);
 
             if (success) {
                 return Response.<Void>builder()
@@ -221,11 +269,11 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
     }
 
     @RequestMapping(value = "disconnect", method = RequestMethod.POST)
-    @Override
-    public Response<Void> disconnect(@RequestParam("connectionId") String connectionId) {
+    public Response<Void> disconnect(@RequestParam("connectionId") String connectionId,
+                                     Principal principal) {
         try {
             log.info("断开SSH连接 connectionId={}", connectionId);
-            sshConnectionDomainService.disconnect(connectionId);
+            sshConnectionDomainService.disconnect(principal.getName(), connectionId);
 
             return Response.<Void>builder()
                     .code(ResponseCode.SUCCESS.getCode())
@@ -252,7 +300,6 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
                 .authType(dto.getAuthType() != null ? AuthTypeEnum.fromCode(dto.getAuthType()) : AuthTypeEnum.PASSWORD)
                 .password(dto.getPassword())
                 .privateKey(dto.getPrivateKey())
-                .userId(dto.getUserId())
                 .build();
     }
 
@@ -276,7 +323,6 @@ public class SshConnectionController implements com.llf.ai.api.ISshConnectionSer
                 .authType(entity.getAuthType() != null ? entity.getAuthType().getCode() : null)
                 .status(entity.getStatus() != null ? entity.getStatus().getCode() : null)
                 .encrypted(entity.getEncrypted())
-                .userId(entity.getUserId())
                 .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().format(FMT) : null)
                 .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().format(FMT) : null)
                 .connectTimeout(configEntity != null ? configEntity.getConnectTimeout() : null)

@@ -9,6 +9,7 @@ import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import com.llf.ai.domain.agent.service.armory.matter.mcp.client.ToolMcpCreateService;
 import com.llf.ai.domain.agent.service.armory.matter.mcp.client.factory.DefaultMcpClientFactory;
 import com.llf.ai.domain.agent.service.armory.matter.skills.ToolSkillsCreateService;
+import com.llf.ai.domain.agent.service.model.RuntimeChatModelService;
 import com.llf.ai.domain.agent.service.model.RuntimeRoutingChatModel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +35,9 @@ public class ChatModelNode extends AbstractArmorySupport {
 
     @Resource
     private ToolSkillsCreateService toolSkillsCreateService;
+
+    @Resource
+    private RuntimeChatModelService runtimeChatModelService;
 
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
@@ -74,7 +78,7 @@ public class ChatModelNode extends AbstractArmorySupport {
                         .build())
                 .build();
 
-        dynamicContext.setChatModel(new RuntimeRoutingChatModel(defaultChatModel));
+        dynamicContext.setChatModel(new RuntimeRoutingChatModel(defaultChatModel, runtimeChatModelService));
 
         return router(requestParameter, dynamicContext);
     }

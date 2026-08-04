@@ -74,6 +74,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 3. 显式绑定工具执行上下文。Spring AI 适配层不会向 ADK 工具传递 ToolContext。
         String terminalSessionId = dynamicContext.getTerminalSessionId();
         SshExecuteAdkTool.setCurrentExecutionContext(
+                requestParameter.getUserId(),
                 terminalSessionId,
                 requestParameter.getConnectionId(),
                 dynamicContext.getSessionId()
@@ -373,6 +374,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 委托领域服务构建富化消息
         return promptService.buildEnrichedMessage(
                 userMessage,
+                dynamicContext.getUserId(),
                 dynamicContext.getSessionId(),
                 dynamicContext.getTerminalSessionId(),
                 dynamicContext.getRecentCommands()

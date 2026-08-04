@@ -15,10 +15,17 @@ final class RuntimeModelConfigMapper {
         }
         return new RuntimeModelConfig(
                 dto.getProvider(),
+                dto.getProtocol(),
                 dto.getBaseUrl(),
                 dto.getApiKey(),
+                dto.getAuthType(),
+                dto.getAuthHeader(),
+                dto.getAuthPrefix(),
+                dto.getModelListPath(),
                 dto.getModel(),
                 dto.getTemperature(),
+                dto.getOmitTemperature(),
+                dto.getTokenParameter(),
                 dto.getMaxTokens()
         );
     }
@@ -29,8 +36,15 @@ final class RuntimeModelConfigMapper {
         }
         return new RuntimeModelConfig(
                 dto.getProvider(),
+                dto.getProtocol(),
                 dto.getBaseUrl(),
                 dto.getApiKey(),
+                dto.getAuthType(),
+                dto.getAuthHeader(),
+                dto.getAuthPrefix(),
+                dto.getModelListPath(),
+                null,
+                null,
                 null,
                 null,
                 null

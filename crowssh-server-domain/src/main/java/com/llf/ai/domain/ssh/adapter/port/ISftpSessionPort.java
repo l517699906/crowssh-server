@@ -20,6 +20,20 @@ public interface ISftpSessionPort {
 
     long fileSize(String connectionId, String remotePath);
 
+    void rename(String connectionId, String remotePath, String newName);
+
+    void createDirectory(String connectionId, String remotePath, String name);
+
+    void createFile(String connectionId, String remotePath, String name);
+
+    void archive(String connectionId, String remotePath, String archiveName);
+
+    void extract(String connectionId, String remotePath, String directoryName);
+
+    void delete(String connectionId, String remotePath);
+
+    void chmod(String connectionId, String remotePath, int permissions);
+
     SftpContentEntity readContent(String connectionId, String remotePath, long maxSize);
 
     SftpContentEntity writeContent(String connectionId, String remotePath, byte[] content,

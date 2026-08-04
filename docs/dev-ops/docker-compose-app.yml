@@ -9,6 +9,8 @@ services:
     restart: on-failure
     ports:
       - "8091:8091"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - TZ=PRC
       - SERVER_PORT=8091

@@ -40,9 +40,6 @@ public class SshConnectionRequestDTO {
     /** 私钥内容 */
     private String privateKey;
 
-    /** 用户ID */
-    private String userId;
-
     // ---------- 高级配置 ----------
 
     /** 连接超时时间(秒) */

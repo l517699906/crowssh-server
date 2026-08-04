@@ -37,7 +37,8 @@ public interface IPromptService {
      * @param recentCommands     最近执行的命令列表
      * @return 注入了动态上下文的用户消息
      */
-    String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands);
+    String buildEnrichedMessage(String userMessage, String ownerId, String sessionId,
+                                String terminalSessionId, List<String> recentCommands);
 
     /**
      * 清除指定会话的里程碑记录

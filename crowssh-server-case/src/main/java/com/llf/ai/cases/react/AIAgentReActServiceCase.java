@@ -285,10 +285,17 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         }
         return new RuntimeModelConfig(
                 runtimeModel.getProvider(),
+                runtimeModel.getProtocol(),
                 runtimeModel.getBaseUrl(),
                 runtimeModel.getApiKey(),
+                runtimeModel.getAuthType(),
+                runtimeModel.getAuthHeader(),
+                runtimeModel.getAuthPrefix(),
+                runtimeModel.getModelListPath(),
                 runtimeModel.getModel(),
                 runtimeModel.getTemperature(),
+                runtimeModel.getOmitTemperature(),
+                runtimeModel.getTokenParameter(),
                 runtimeModel.getMaxTokens()
         );
     }

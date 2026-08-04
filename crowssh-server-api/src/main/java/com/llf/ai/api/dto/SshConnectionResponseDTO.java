@@ -40,9 +40,6 @@ public class SshConnectionResponseDTO {
     /** 是否加密 */
     private Integer encrypted;
 
-    /** 用户ID */
-    private String userId;
-
     /** 创建时间 */
     private String createdAt;
 

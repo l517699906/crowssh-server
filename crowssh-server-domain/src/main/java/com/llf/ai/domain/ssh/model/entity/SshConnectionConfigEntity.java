@@ -32,10 +32,22 @@ public class SshConnectionConfigEntity {
      * 设置默认值
      */
     public SshConnectionConfigEntity withDefaults() {
-        if (connectTimeout == null) connectTimeout = 10;
+        if (connectTimeout == null) connectTimeout = 30;
         if (keepaliveInterval == null) keepaliveInterval = 60;
         if (compression == null) compression = false;
         if (strictHostKeyCheck == null) strictHostKeyCheck = true;
         return this;
+    }
+
+    /**
+     * 校验运行时配置
+     */
+    public void validate() {
+        if (connectTimeout == null || connectTimeout < 1 || connectTimeout > 120) {
+            throw new IllegalArgumentException("连接超时时间必须在 1 到 120 秒之间");
+        }
+        if (keepaliveInterval == null || keepaliveInterval < 0 || keepaliveInterval > 300) {
+            throw new IllegalArgumentException("保活间隔必须在 0 到 300 秒之间");
+        }
     }
 }

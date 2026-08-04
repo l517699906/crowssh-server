@@ -16,4 +16,5 @@ public class SftpFileDTO {
     private boolean directory;
     private long size;
     private long modifiedAt;
+    private String permissions;
 }

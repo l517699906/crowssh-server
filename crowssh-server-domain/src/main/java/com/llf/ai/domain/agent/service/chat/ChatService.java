@@ -14,6 +14,7 @@ import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
 import com.llf.ai.domain.ssh.adapter.port.TerminalSessionEntity;
+import com.llf.ai.domain.ssh.service.ISshConnectionService;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
 import com.llf.ai.types.enums.ResponseCode;
 import com.llf.ai.types.exception.AppException;
@@ -42,6 +43,9 @@ public class ChatService implements IChatService {
 
     @Resource
     private ISshTerminalService sshTerminalService;
+
+    @Resource
+    private ISshConnectionService sshConnectionService;
 
     private final Map<String, ChatSessionBinding> sessionBindings = new ConcurrentHashMap<>();
 
@@ -80,13 +84,15 @@ public class ChatService implements IChatService {
 
         String appName = aiAgentRegisterVO.getAppName();
         InMemoryRunner runner = aiAgentRegisterVO.getRunner();
-        SshResourceContext resourceContext = resolveResourceContext(connectionId, terminalSessionId);
+        SshResourceContext resourceContext = resolveResourceContext(
+                userId, connectionId, terminalSessionId);
         Session session = runner.sessionService()
                 .createSession(appName, userId, resourceContext.toState(), null)
                 .blockingGet();
         sessionBindings.put(
                 session.id(),
-                new ChatSessionBinding(agentId, userId, resourceContext.connectionId())
+                new ChatSessionBinding(agentId, userId, resourceContext.connectionId(),
+                        resourceContext.terminalSessionId())
         );
         return session.id();
     }
@@ -100,7 +106,8 @@ public class ChatService implements IChatService {
             String terminalSessionId
     ) {
         String normalizedSessionId = normalize(requestedSessionId);
-        SshResourceContext resourceContext = resolveResourceContext(connectionId, terminalSessionId);
+        SshResourceContext resourceContext = resolveResourceContext(
+                userId, connectionId, terminalSessionId);
 
         if (normalizedSessionId == null) {
             return createSession(agentId, userId, resourceContext.connectionId(), resourceContext.terminalSessionId());
@@ -114,7 +121,8 @@ public class ChatService implements IChatService {
         ChatSessionBinding binding = sessionBindings.get(normalizedSessionId);
         if (binding != null) {
             // 已存在的绑定仍必须通过归属校验，不能把错误的用户/智能体/服务器 ID 当成“旧会话”恢复。
-            validateSessionBinding(normalizedSessionId, agentId, userId, resourceContext.connectionId());
+            validateSessionBinding(normalizedSessionId, agentId, userId,
+                    resourceContext.connectionId(), resourceContext.terminalSessionId());
             if (adkSessionExists(registerVO.getRunner(), registerVO.getAppName(), userId, normalizedSessionId)) {
                 return normalizedSessionId;
             }
@@ -194,7 +202,8 @@ public class ChatService implements IChatService {
                 connectionId,
                 terminalSessionId
         );
-        SshResourceContext resourceContext = resolveResourceContext(connectionId, terminalSessionId);
+        SshResourceContext resourceContext = resolveResourceContext(
+                userId, connectionId, terminalSessionId);
 
         Content userMsg = Content.fromParts(Part.fromText(message));
         return aiAgentRegisterVO.getRunner().runAsync(
@@ -206,14 +215,22 @@ public class ChatService implements IChatService {
         );
     }
 
-    private SshResourceContext resolveResourceContext(String connectionId, String terminalSessionId) {
+    private SshResourceContext resolveResourceContext(
+            String ownerId, String connectionId, String terminalSessionId) {
+        if (ownerId == null || ownerId.isBlank()) {
+            throw new IllegalArgumentException("设备身份不能为空");
+        }
         String requestedConnectionId = normalize(connectionId);
         String requestedTerminalSessionId = normalize(terminalSessionId);
         if (requestedTerminalSessionId == null) {
-            return new SshResourceContext(requestedConnectionId, null);
+            if (requestedConnectionId != null) {
+                sshConnectionService.requireOwnership(ownerId, requestedConnectionId);
+            }
+            return new SshResourceContext(ownerId, requestedConnectionId, null);
         }
 
-        TerminalSessionEntity terminalSession = sshTerminalService.getTerminalSession(requestedTerminalSessionId);
+        TerminalSessionEntity terminalSession = sshTerminalService.getTerminalSession(
+                ownerId, requestedTerminalSessionId);
         if (terminalSession == null || !terminalSession.isActive()) {
             throw new IllegalArgumentException("SSH 终端会话不存在或已关闭");
         }
@@ -222,14 +239,15 @@ public class ChatService implements IChatService {
         if (requestedConnectionId != null && !Objects.equals(requestedConnectionId, actualConnectionId)) {
             throw new IllegalArgumentException("AI 对话绑定的服务器与当前 SSH 终端不一致");
         }
-        return new SshResourceContext(actualConnectionId, requestedTerminalSessionId);
+        return new SshResourceContext(ownerId, actualConnectionId, requestedTerminalSessionId);
     }
 
     private void validateSessionBinding(
             String sessionId,
             String agentId,
             String userId,
-            String connectionId
+            String connectionId,
+            String terminalSessionId
     ) {
         ChatSessionBinding current = sessionBindings.get(sessionId);
         if (current == null) {
@@ -247,8 +265,13 @@ public class ChatService implements IChatService {
             sessionBindings.replace(
                     sessionId,
                     current,
-                    new ChatSessionBinding(agentId, userId, connectionId)
+                    new ChatSessionBinding(agentId, userId, connectionId, terminalSessionId)
             );
+            return;
+        }
+        if (current.terminalSessionId() != null
+                && !Objects.equals(current.terminalSessionId(), terminalSessionId)) {
+            throw new IllegalArgumentException("AI 会话不能切换到其他 SSH 终端");
         }
     }
 
@@ -271,12 +294,18 @@ public class ChatService implements IChatService {
         return value.trim();
     }
 
-    private record ChatSessionBinding(String agentId, String userId, String connectionId) {
+    private record ChatSessionBinding(
+            String agentId,
+            String userId,
+            String connectionId,
+            String terminalSessionId
+    ) {
     }
 
-    private record SshResourceContext(String connectionId, String terminalSessionId) {
+    private record SshResourceContext(String ownerId, String connectionId, String terminalSessionId) {
         private Map<String, Object> toState() {
             Map<String, Object> state = new HashMap<>();
+            state.put(SshExecuteAdkTool.OWNER_ID_STATE_KEY, ownerId);
             state.put(SshExecuteAdkTool.CONNECTION_ID_STATE_KEY, connectionId == null ? "" : connectionId);
             state.put(
                     SshExecuteAdkTool.TERMINAL_SESSION_ID_STATE_KEY,

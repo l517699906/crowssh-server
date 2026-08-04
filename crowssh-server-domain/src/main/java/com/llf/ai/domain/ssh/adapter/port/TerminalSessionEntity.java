@@ -25,6 +25,9 @@ public class TerminalSessionEntity {
     /** SSH连接ID */
     private String connectionId;
 
+    /** 会话所属设备身份ID */
+    private String ownerId;
+
     /** 终端列数 */
     private int cols;
 

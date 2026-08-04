@@ -36,19 +36,20 @@ public class SshConnectionRepository implements ISshConnectionRepository {
     }
 
     @Override
-    public void updateConnection(SshConnectionEntity entity) {
-        sshConnectionDAO.update(toConnectionPO(entity));
+    public void updateConnection(String ownerId, SshConnectionEntity entity) {
+        sshConnectionDAO.update(ownerId, toConnectionPO(entity));
     }
 
     @Override
-    public void deleteConnection(String connectionId) {
-        sshConnectionConfigDAO.deleteByConnectionId(connectionId);
-        sshConnectionDAO.delete(connectionId);
+    public void deleteConnection(String ownerId, String connectionId) {
+        if (sshConnectionDAO.delete(ownerId, connectionId) > 0) {
+            sshConnectionConfigDAO.deleteByConnectionId(connectionId);
+        }
     }
 
     @Override
-    public SshConnectionEntity queryConnectionById(String connectionId) {
-        SshConnectionPO po = sshConnectionDAO.queryByConnectionId(connectionId);
+    public SshConnectionEntity queryConnectionById(String ownerId, String connectionId) {
+        SshConnectionPO po = sshConnectionDAO.queryByConnectionId(ownerId, connectionId);
         return po == null ? null : toConnectionEntity(po);
     }
 

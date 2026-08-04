@@ -7,8 +7,6 @@ public class CreateSessionRequestDTO {
 
     private String agentId;
 
-    private String userId;
-
     private String connectionId;
 
     private String terminalSessionId;

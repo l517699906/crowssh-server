@@ -67,9 +67,11 @@ public class PromptService implements IPromptService {
      * @return 注入了动态上下文的用户消息
      */
     @Override
-    public String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands) {
+    public String buildEnrichedMessage(String userMessage, String ownerId, String sessionId,
+                                       String terminalSessionId, List<String> recentCommands) {
         // 1. 从 SSH 终端采集环境信息
-        PromptContextVO promptContextVO = buildPromptContext(sessionId, terminalSessionId, recentCommands);
+        PromptContextVO promptContextVO = buildPromptContext(
+                ownerId, sessionId, terminalSessionId, recentCommands);
 
         // 2. 生成消息前缀
         String prefix = dynamicPromptBuilder.buildMessagePrefix(promptContextVO);
@@ -113,28 +115,33 @@ public class PromptService implements IPromptService {
      * @param recentCommands    最近执行的命令列表
      * @return 组装完成的动态上下文值对象
      */
-    private PromptContextVO buildPromptContext(String sessionId, String terminalSessionId, List<String> recentCommands) {
+    private PromptContextVO buildPromptContext(String ownerId, String sessionId,
+                                               String terminalSessionId,
+                                               List<String> recentCommands) {
         String osInfo = "";
         String currentUser = "";
         String currentDirectory = "";
 
         if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
             try {
-                String raw = sshTerminalService.executeCommand(terminalSessionId, "uname -srm");
+                String raw = sshTerminalService.executeCommand(
+                        ownerId, terminalSessionId, "uname -srm");
                 osInfo = raw != null ? raw.trim() : "";
             } catch (Exception e) {
                 log.debug("获取 OS 信息失败: {}", e.getMessage());
             }
 
             try {
-                String raw = sshTerminalService.executeCommand(terminalSessionId, "whoami");
+                String raw = sshTerminalService.executeCommand(
+                        ownerId, terminalSessionId, "whoami");
                 currentUser = raw != null ? raw.trim() : "";
             } catch (Exception e) {
                 log.debug("获取用户信息失败: {}", e.getMessage());
             }
 
             try {
-                String raw = sshTerminalService.executeCommand(terminalSessionId, "pwd");
+                String raw = sshTerminalService.executeCommand(
+                        ownerId, terminalSessionId, "pwd");
                 currentDirectory = raw != null ? raw.trim() : "";
             } catch (Exception e) {
                 log.debug("获取工作目录失败: {}", e.getMessage());

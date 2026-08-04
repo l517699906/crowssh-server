@@ -1,12 +1,12 @@
 package com.llf.ai.domain.agent.service.model;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llf.ai.domain.agent.model.valobj.RuntimeModelConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -19,21 +19,93 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 @Service
 public class RuntimeChatModelService {
 
-    private static final Set<String> PROVIDERS = Set.of("openai", "deepseek", "openai-compatible");
+    private static final Logger LOGGER = LoggerFactory.getLogger(RuntimeChatModelService.class);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(12);
     private static final int MAX_MODEL_RESPONSE_BYTES = 1024 * 1024;
-    private static final int MAX_MODEL_COUNT = 500;
     private static final int MAX_MODEL_ID_LENGTH = 200;
+    private static final Set<String> PROTOCOLS = Set.of(
+            OpenAiChatProtocolAdapter.PROTOCOL,
+            AnthropicMessagesProtocolAdapter.PROTOCOL,
+            GeminiNativeProtocolAdapter.PROTOCOL
+    );
+    private static final Set<String> AUTH_TYPES = Set.of("bearer", "x-api-key", "api-key", "custom");
+    private static final Set<String> TOKEN_PARAMETERS = Set.of(
+            "auto",
+            "max_tokens",
+            "max_completion_tokens"
+    );
+    private static final Set<String> FORBIDDEN_AUTH_HEADERS = Set.of(
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "upgrade",
+            "proxy-authorization",
+            "proxy-authenticate",
+            "forwarded",
+            "via",
+            "te",
+            "trailer",
+            "cookie",
+            "set-cookie"
+    );
+    private static final Pattern HEADER_NAME = Pattern.compile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$");
+    private static final Map<String, ProviderPolicy> PROVIDER_POLICIES = Map.ofEntries(
+            Map.entry("openai", new ProviderPolicy(
+                    OpenAiChatProtocolAdapter.PROTOCOL,
+                    Set.of("api.openai.com"),
+                    "bearer",
+                    "models"
+            )),
+            Map.entry("anthropic", new ProviderPolicy(
+                    AnthropicMessagesProtocolAdapter.PROTOCOL,
+                    Set.of("api.anthropic.com"),
+                    "x-api-key",
+                    "v1/models"
+            )),
+            Map.entry("gemini", new ProviderPolicy(
+                    GeminiNativeProtocolAdapter.PROTOCOL,
+                    Set.of("generativelanguage.googleapis.com"),
+                    "x-api-key",
+                    "v1beta/models"
+            )),
+            Map.entry("deepseek", new ProviderPolicy(
+                    OpenAiChatProtocolAdapter.PROTOCOL,
+                    Set.of("api.deepseek.com"),
+                    "bearer",
+                    "models"
+            )),
+            Map.entry("openrouter", new ProviderPolicy(
+                    OpenAiChatProtocolAdapter.PROTOCOL,
+                    Set.of("openrouter.ai"),
+                    "bearer",
+                    "models"
+            )),
+            Map.entry("groq", new ProviderPolicy(
+                    OpenAiChatProtocolAdapter.PROTOCOL,
+                    Set.of("api.groq.com"),
+                    "bearer",
+                    "models"
+            )),
+            Map.entry("dashscope", new ProviderPolicy(
+                    OpenAiChatProtocolAdapter.PROTOCOL,
+                    Set.of("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"),
+                    "bearer",
+                    "models"
+            ))
+    );
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final Map<String, RuntimeModelProtocolAdapter> adapters;
 
     public RuntimeChatModelService() {
         this.httpClient = HttpClient.newBuilder()
@@ -41,26 +113,37 @@ public class RuntimeChatModelService {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         this.objectMapper = new ObjectMapper();
+        this.adapters = List.<RuntimeModelProtocolAdapter>of(
+                        new OpenAiChatProtocolAdapter(),
+                        new AnthropicMessagesProtocolAdapter(),
+                        new GeminiNativeProtocolAdapter()
+                ).stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        RuntimeModelProtocolAdapter::protocol,
+                        adapter -> adapter
+                ));
     }
 
     public RuntimeChatModelScope open(RuntimeModelConfig config) {
-        RuntimeChatModelContext.set(build(config));
+        validateConnection(config);
+        validateGeneration(config);
+        RuntimeChatModelContext.set(config);
         return new RuntimeChatModelScope();
     }
 
     public void test(RuntimeModelConfig config) {
-        build(config).call("Reply only with OK");
+        ChatModel model = build(config, List.of());
+        try {
+            model.call("Reply only with OK");
+        } finally {
+            destroy(model);
+        }
     }
 
     public List<String> listModels(RuntimeModelConfig config) {
-        ValidatedConnection connection = validateConnection(config);
-        URI modelsUri = URI.create(connection.baseUrl() + "/v1/models");
-        HttpRequest request = HttpRequest.newBuilder(modelsUri)
-                .timeout(REQUEST_TIMEOUT)
-                .header("Accept", "application/json")
-                .header("Authorization", "Bearer " + connection.apiKey())
-                .GET()
-                .build();
+        RuntimeModelConnection connection = validateConnection(config);
+        RuntimeModelProtocolAdapter adapter = adapter(connection.protocol());
+        HttpRequest request = adapter.modelListRequest(connection, REQUEST_TIMEOUT);
 
         try {
             HttpResponse<InputStream> response = httpClient.send(
@@ -73,7 +156,7 @@ public class RuntimeChatModelService {
                             "模型列表查询失败（HTTP " + response.statusCode() + "）"
                     );
                 }
-                return parseModelIds(readBounded(body));
+                return adapter.parseModelIds(readBounded(body), objectMapper);
             }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
@@ -83,38 +166,66 @@ public class RuntimeChatModelService {
         }
     }
 
-    private ChatModel build(RuntimeModelConfig config) {
-        ValidatedConnection connection = validateConnection(config);
+    ChatModel build(RuntimeModelConfig config, List<ToolCallback> toolCallbacks) {
+        RuntimeModelConnection connection = validateConnection(config);
         validateGeneration(config);
-
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(connection.baseUrl())
-                .apiKey(connection.apiKey())
-                .completionsPath("/v1/chat/completions")
-                .embeddingsPath("/v1/embeddings")
-                .build();
-
-        OpenAiChatOptions.Builder options = OpenAiChatOptions.builder()
-                .model(config.getModel().trim())
-                .temperature(config.getTemperature() != null ? config.getTemperature() : 0.2);
-        if (config.getMaxTokens() != null) {
-            options.maxTokens(config.getMaxTokens());
-        }
-
-        return OpenAiChatModel.builder()
-                .openAiApi(openAiApi)
-                .defaultOptions(options.build())
-                .build();
+        return adapter(connection.protocol()).build(connection, config, List.copyOf(toolCallbacks));
     }
 
-    private ValidatedConnection validateConnection(RuntimeModelConfig config) {
+    private RuntimeModelProtocolAdapter adapter(String protocol) {
+        RuntimeModelProtocolAdapter adapter = adapters.get(protocol);
+        if (adapter == null) {
+            throw new IllegalArgumentException("不支持的 AI 调用协议");
+        }
+        return adapter;
+    }
+
+    private void destroy(ChatModel model) {
+        if (!(model instanceof DisposableBean disposable)) {
+            return;
+        }
+        try {
+            disposable.destroy();
+        } catch (Exception error) {
+            LOGGER.debug("关闭测试用 AI 模型失败", error);
+        }
+    }
+
+    private RuntimeModelConnection validateConnection(RuntimeModelConfig config) {
         if (config == null) {
             throw new IllegalArgumentException("未提供客户端 AI 配置");
         }
 
         String provider = required(config.getProvider(), "服务商").toLowerCase(Locale.ROOT);
-        if (!PROVIDERS.contains(provider)) {
+        boolean customProvider = "openai-compatible".equals(provider);
+        ProviderPolicy policy = PROVIDER_POLICIES.get(provider);
+        if (!customProvider && policy == null) {
             throw new IllegalArgumentException("不支持的 AI 服务商");
+        }
+
+        boolean legacyProtocol = config.getProtocol() == null || config.getProtocol().trim().isEmpty();
+        String protocol = optional(config.getProtocol(), customProvider
+                ? OpenAiChatProtocolAdapter.PROTOCOL
+                : policy.protocol()).toLowerCase(Locale.ROOT);
+        if (!PROTOCOLS.contains(protocol)) {
+            throw new IllegalArgumentException("不支持的 AI 调用协议");
+        }
+        if (!customProvider && !policy.protocol().equals(protocol)) {
+            throw new IllegalArgumentException("服务商与调用协议不匹配");
+        }
+
+        String expectedAuth = customProvider
+                ? defaultAuthType(protocol)
+                : policy.authType();
+        String authType = optional(config.getAuthType(), expectedAuth).toLowerCase(Locale.ROOT);
+        if (!AUTH_TYPES.contains(authType)) {
+            throw new IllegalArgumentException("不支持的 API Key 鉴权方式");
+        }
+        if (!OpenAiChatProtocolAdapter.PROTOCOL.equals(protocol) && !"x-api-key".equals(authType)) {
+            throw new IllegalArgumentException("原生协议仅支持官方 API Key 鉴权方式");
+        }
+        if (!customProvider && !policy.authType().equals(authType)) {
+            throw new IllegalArgumentException("服务商与鉴权方式不匹配");
         }
 
         String apiKey = required(config.getApiKey(), "API Key");
@@ -123,15 +234,37 @@ public class RuntimeChatModelService {
         }
 
         URI uri = parseHttpsUri(config.getBaseUrl());
-        String host = uri.getHost().toLowerCase(Locale.ROOT);
-        if ("openai".equals(provider) && !"api.openai.com".equals(host)) {
-            throw new IllegalArgumentException("OpenAI 服务商地址必须为 api.openai.com");
+        if (legacyProtocol && OpenAiChatProtocolAdapter.PROTOCOL.equals(protocol)) {
+            uri = migrateLegacyOpenAiBaseUri(uri);
         }
-        if ("deepseek".equals(provider) && !"api.deepseek.com".equals(host)) {
-            throw new IllegalArgumentException("DeepSeek 服务商地址必须为 api.deepseek.com");
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
+        if (!customProvider && !policy.hosts().contains(host)) {
+            throw new IllegalArgumentException("服务商地址与所选官方服务商不匹配");
         }
         validatePublicHost(host);
-        return new ValidatedConnection(normalizeBaseUrl(config.getBaseUrl()), apiKey);
+
+        String modelListPath = customProvider
+                ? optional(config.getModelListPath(), defaultModelListPath(protocol))
+                : policy.modelListPath();
+        modelListPath = validateRelativePath(modelListPath, "模型列表路径");
+
+        String authHeader = null;
+        String authPrefix = null;
+        if ("custom".equals(authType)) {
+            authHeader = validateAuthHeader(config.getAuthHeader());
+            authPrefix = validateAuthPrefix(config.getAuthPrefix());
+        }
+
+        return new RuntimeModelConnection(
+                provider,
+                protocol,
+                normalizeBaseUri(uri),
+                apiKey,
+                authType,
+                authHeader,
+                authPrefix,
+                modelListPath
+        );
     }
 
     private void validateGeneration(RuntimeModelConfig config) {
@@ -148,6 +281,10 @@ public class RuntimeChatModelService {
         if (maxTokens != null && (maxTokens < 1 || maxTokens > 131072)) {
             throw new IllegalArgumentException("最大输出 Token 必须在 1 到 131072 之间");
         }
+        String tokenParameter = optional(config.getTokenParameter(), "auto").toLowerCase(Locale.ROOT);
+        if (!TOKEN_PARAMETERS.contains(tokenParameter)) {
+            throw new IllegalArgumentException("不支持的 Token 参数");
+        }
     }
 
     private URI parseHttpsUri(String baseUrl) {
@@ -161,7 +298,8 @@ public class RuntimeChatModelService {
                     || uri.getHost() == null
                     || uri.getUserInfo() != null
                     || uri.getQuery() != null
-                    || uri.getFragment() != null) {
+                    || uri.getFragment() != null
+                    || uri.getRawPath().contains("..")) {
                 throw new IllegalArgumentException("服务地址必须是有效的 HTTPS 地址");
             }
             return uri;
@@ -195,12 +333,65 @@ public class RuntimeChatModelService {
         }
     }
 
-    private String normalizeBaseUrl(String baseUrl) {
-        String value = baseUrl.trim();
-        value = value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
-        return value.toLowerCase(Locale.ROOT).endsWith("/v1")
-                ? value.substring(0, value.length() - 3)
-                : value;
+    private URI normalizeBaseUri(URI uri) {
+        String value = uri.toString();
+        while (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return URI.create(value);
+    }
+
+    private URI migrateLegacyOpenAiBaseUri(URI uri) {
+        URI normalized = normalizeBaseUri(uri);
+        return normalized.getPath().toLowerCase(Locale.ROOT).endsWith("/v1")
+                ? normalized
+                : URI.create(normalized + "/v1");
+    }
+
+    private String validateRelativePath(String path, String field) {
+        String value = required(path, field).replaceFirst("^/+", "");
+        if (value.length() > 500
+                || value.contains("..")
+                || value.contains("?")
+                || value.contains("#")
+                || value.contains(":")) {
+            throw new IllegalArgumentException(field + "必须是有效的相对路径");
+        }
+        return value;
+    }
+
+    private String validateAuthHeader(String header) {
+        String value = required(header, "自定义鉴权 Header");
+        String normalized = value.toLowerCase(Locale.ROOT);
+        if (!HEADER_NAME.matcher(value).matches()
+                || FORBIDDEN_AUTH_HEADERS.contains(normalized)
+                || normalized.startsWith("x-forwarded-")
+                || normalized.startsWith("sec-")) {
+            throw new IllegalArgumentException("自定义鉴权 Header 名称无效");
+        }
+        return value;
+    }
+
+    private String validateAuthPrefix(String prefix) {
+        if (prefix == null) {
+            return "";
+        }
+        if (prefix.length() > 100 || prefix.contains("\r") || prefix.contains("\n")) {
+            throw new IllegalArgumentException("自定义鉴权前缀无效");
+        }
+        return prefix;
+    }
+
+    private String defaultAuthType(String protocol) {
+        return OpenAiChatProtocolAdapter.PROTOCOL.equals(protocol) ? "bearer" : "x-api-key";
+    }
+
+    private String defaultModelListPath(String protocol) {
+        return switch (protocol) {
+            case AnthropicMessagesProtocolAdapter.PROTOCOL -> "v1/models";
+            case GeminiNativeProtocolAdapter.PROTOCOL -> "v1beta/models";
+            default -> "models";
+        };
     }
 
     private byte[] readBounded(InputStream body) throws IOException {
@@ -212,29 +403,11 @@ public class RuntimeChatModelService {
     }
 
     List<String> parseModelIds(byte[] payload) {
-        try {
-            JsonNode data = objectMapper.readTree(payload).path("data");
-            if (!data.isArray()) {
-                throw new IllegalArgumentException("模型列表响应格式无效");
-            }
+        return RuntimeModelResponseParser.parseOpenAi(payload, objectMapper);
+    }
 
-            Set<String> models = new TreeSet<>();
-            for (JsonNode item : data) {
-                String id = item.path("id").asText("").trim();
-                if (!id.isEmpty() && id.length() <= MAX_MODEL_ID_LENGTH) {
-                    models.add(id);
-                    if (models.size() >= MAX_MODEL_COUNT) {
-                        break;
-                    }
-                }
-            }
-            if (models.isEmpty()) {
-                throw new IllegalArgumentException("服务商未返回可用模型");
-            }
-            return List.copyOf(models);
-        } catch (IOException error) {
-            throw new IllegalArgumentException("模型列表响应格式无效");
-        }
+    List<String> parseGeminiModelIds(byte[] payload) {
+        return RuntimeModelResponseParser.parseGemini(payload, objectMapper);
     }
 
     private String required(String value, String field) {
@@ -244,6 +417,13 @@ public class RuntimeChatModelService {
         return value.trim();
     }
 
-    private record ValidatedConnection(String baseUrl, String apiKey) {
+    private String optional(String value, String fallback) {
+        return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    private record ProviderPolicy(String protocol,
+                                  Set<String> hosts,
+                                  String authType,
+                                  String modelListPath) {
     }
 }

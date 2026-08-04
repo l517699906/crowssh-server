@@ -34,6 +34,16 @@ public class TerminalSessionPort implements ITerminalSessionPort {
     private static final String TERMINAL_TYPE = "xterm-256color";
     private static final long COMMAND_CANCEL_GRACE_MS = 2000;
     private static final long OUTPUT_DRAIN_TIMEOUT_MS = 2000;
+    private static final String WORKING_DIRECTORY_SHELL_INTEGRATION =
+            " __crowssh_emit_cwd() { printf '\\033]7;file://crowssh%s\\007' \"$PWD\"; }; "
+                    + "if [ -n \"${BASH_VERSION:-}\" ]; then "
+                    + "case \";${PROMPT_COMMAND:-};\" in *\";__crowssh_emit_cwd;\"*) ;; "
+                    + "*) PROMPT_COMMAND=\"__crowssh_emit_cwd${PROMPT_COMMAND:+;$PROMPT_COMMAND}\" ;; esac; "
+                    + "elif [ -n \"${ZSH_VERSION:-}\" ]; then "
+                    + "autoload -Uz add-zsh-hook >/dev/null 2>&1 "
+                    + "&& add-zsh-hook precmd __crowssh_emit_cwd; "
+                    + "else PS1='$(__crowssh_emit_cwd)'\"${PS1:-}\"; fi; "
+                    + "__crowssh_emit_cwd";
 
     private final SshSessionPort sshSessionService;
 
@@ -68,6 +78,15 @@ public class TerminalSessionPort implements ITerminalSessionPort {
     /** sessionId -> 当前运行中的 AI exec channel */
     private final Map<String, Session.Command> activeCommands = new ConcurrentHashMap<>();
 
+    /** sessionId -> 持久交互 Shell 最近上报的工作目录 */
+    private final Map<String, String> workingDirectories = new ConcurrentHashMap<>();
+
+    /** sessionId -> OSC 7 流式解析器 */
+    private final Map<String, TerminalWorkingDirectoryTracker> workingDirectoryTrackers = new ConcurrentHashMap<>();
+
+    /** sessionId -> Shell 集成命令回显过滤器 */
+    private final Map<String, OneShotTerminalOutputFilter> shellIntegrationOutputFilters = new ConcurrentHashMap<>();
+
     @Override
     public String openTerminal(String connectionId, int cols, int rows) {
         String sessionId = UUID.randomUUID().toString().replace("-", "");
@@ -83,8 +102,13 @@ public class TerminalSessionPort implements ITerminalSessionPort {
             inputStreams.put(sessionId, in);
             outputStreams.put(sessionId, out);
             outputBuffers.put(sessionId, new StringBuilder());
+            workingDirectoryTrackers.put(sessionId, new TerminalWorkingDirectoryTracker(
+                    workingDirectory -> updateWorkingDirectory(sessionId, workingDirectory)));
+            shellIntegrationOutputFilters.put(sessionId,
+                    new OneShotTerminalOutputFilter(WORKING_DIRECTORY_SHELL_INTEGRATION));
             // 启动输出读取线程，持续读取 shell 输出到缓冲区
             startOutputReader(sessionId, in);
+            installWorkingDirectoryTracking(sessionId, out);
 
             // 等待 Shell 首次输出到达 + 额外等待让 MOTD 完整积累
             // 然后消费缓冲区，作为 initialOutput 返回给前端
@@ -224,6 +248,7 @@ public class TerminalSessionPort implements ITerminalSessionPort {
         }
 
         String safeCommand = command == null ? "" : command;
+        String execCommandText = commandInWorkingDirectory(safeCommand, workingDirectories.get(sessionId));
         StringBuilder resultBuffer = new StringBuilder();
         Session execSession = null;
         Session.Command execCommand = null;
@@ -234,7 +259,7 @@ public class TerminalSessionPort implements ITerminalSessionPort {
             appendToTerminal(frontBuffer, "\r\n$ " + safeCommand + "\r\n");
 
             execSession = sshSessionService.openSession(connectionId);
-            execCommand = execSession.exec(safeCommand);
+            execCommand = execSession.exec(execCommandText);
             activeCommands.put(sessionId, execCommand);
             ensureSessionOpen(sessionId);
             stdoutReader = startCommandOutputReader(
@@ -429,6 +454,31 @@ public class TerminalSessionPort implements ITerminalSessionPort {
         }
     }
 
+    private void installWorkingDirectoryTracking(String sessionId, OutputStream output) throws IOException {
+        output.write((WORKING_DIRECTORY_SHELL_INTEGRATION + "\r").getBytes(StandardCharsets.UTF_8));
+        output.flush();
+        log.debug("已安装终端工作目录跟踪 sessionId={}", sessionId);
+    }
+
+    private void updateWorkingDirectory(String sessionId, String workingDirectory) {
+        if (!Boolean.TRUE.equals(readerAlive.get(sessionId))) {
+            return;
+        }
+        workingDirectories.put(sessionId, workingDirectory);
+        log.debug("终端工作目录已更新 sessionId={} cwd={}", sessionId, workingDirectory);
+    }
+
+    private String commandInWorkingDirectory(String command, String workingDirectory) {
+        if (command == null || command.isBlank() || workingDirectory == null || workingDirectory.isBlank()) {
+            return command;
+        }
+        return "cd -- " + quoteShellArgument(workingDirectory) + " && " + command;
+    }
+
+    private String quoteShellArgument(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+
     /**
      * 启动输出读取线程
      * SocketTimeoutException 时继续循环（不是真正的断连），
@@ -451,7 +501,15 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                         log.warn("终端 Shell Channel EOF sessionId={}", sessionId);
                         break;
                     }
-                    String text = new String(buf, 0, len, StandardCharsets.UTF_8);
+                    TerminalWorkingDirectoryTracker tracker = workingDirectoryTrackers.get(sessionId);
+                    if (tracker != null) {
+                        tracker.accept(buf, 0, len);
+                    }
+                    OneShotTerminalOutputFilter outputFilter = shellIntegrationOutputFilters.get(sessionId);
+                    byte[] visibleBytes = outputFilter == null
+                            ? java.util.Arrays.copyOf(buf, len)
+                            : outputFilter.filter(buf, 0, len);
+                    String text = new String(visibleBytes, StandardCharsets.UTF_8);
                     StringBuilder buffer = outputBuffers.get(sessionId);
                     if (buffer != null) {
                         synchronized (buffer) {
@@ -529,6 +587,9 @@ public class TerminalSessionPort implements ITerminalSessionPort {
 
         outputBuffers.remove(sessionId);
         connectionIds.remove(sessionId);
+        workingDirectories.remove(sessionId);
+        workingDirectoryTrackers.remove(sessionId);
+        shellIntegrationOutputFilters.remove(sessionId);
         terminalWriteLocks.remove(sessionId);
         commandExecutionLocks.remove(sessionId);
     }

@@ -29,6 +29,7 @@ public class SshExecuteAdkTool {
 
     public static final String TERMINAL_SESSION_ID_STATE_KEY = "crowssh:terminalSessionId";
     public static final String CONNECTION_ID_STATE_KEY = "crowssh:connectionId";
+    public static final String OWNER_ID_STATE_KEY = "crowssh:ownerId";
 
     @Resource
     private ISshTerminalService sshTerminalService;
@@ -49,16 +50,18 @@ public class SshExecuteAdkTool {
      * 设置当前线程的终端会话 ID（兼容旧接口）
      */
     public static void setCurrentTerminalSession(String terminalSessionId) {
-        setCurrentExecutionContext(terminalSessionId, null, null);
+        setCurrentExecutionContext(null, terminalSessionId, null, null);
     }
 
     /**
      * 绑定当前 AI 请求使用的 SSH 资源和会话。
      */
-    public static void setCurrentExecutionContext(String terminalSessionId,
+    public static void setCurrentExecutionContext(String ownerId,
+                                                  String terminalSessionId,
                                                   String connectionId,
                                                   String agentSessionId) {
-        currentExecutionBinding.set(new ExecutionBinding(terminalSessionId, connectionId, agentSessionId));
+        currentExecutionBinding.set(
+                new ExecutionBinding(ownerId, terminalSessionId, connectionId, agentSessionId));
         log.info("[ThreadLocal] 设置终端会话: thread={}, terminalSession={}",
                 Thread.currentThread().getName(), terminalSessionId);
     }
@@ -96,7 +99,9 @@ public class SshExecuteAdkTool {
         }
         String terminalSessionId = stateValue(toolContext, TERMINAL_SESSION_ID_STATE_KEY);
         String connectionId = stateValue(toolContext, CONNECTION_ID_STATE_KEY);
-        return executeBoundCommand(command, terminalSessionId, connectionId, toolContext.sessionId());
+        String ownerId = stateValue(toolContext, OWNER_ID_STATE_KEY);
+        return executeBoundCommand(
+                command, ownerId, terminalSessionId, connectionId, toolContext.sessionId());
     }
 
     /**
@@ -110,23 +115,31 @@ public class SshExecuteAdkTool {
             @Annotations.Schema(name = "command", description = "要执行的完整 Shell 命令；cd、export 等状态不会保留到下一次调用")
             String command) {
         ExecutionBinding binding = currentExecutionBinding.get();
+        String ownerId = binding == null ? null : binding.ownerId();
         String terminalSessionId = binding == null ? null : binding.terminalSessionId();
         TerminalSessionEntity terminalSession = terminalSessionId == null
                 ? null
-                : sshTerminalService.getTerminalSession(terminalSessionId);
+                : sshTerminalService.getTerminalSession(ownerId, terminalSessionId);
         String connectionId = binding == null ? null : binding.connectionId();
         if ((connectionId == null || connectionId.isBlank()) && terminalSession != null) {
             connectionId = terminalSession.getConnectionId();
         }
         String agentSessionId = binding == null ? null : binding.agentSessionId();
-        return executeBoundCommand(command, terminalSessionId, connectionId, agentSessionId);
+        return executeBoundCommand(
+                command, ownerId, terminalSessionId, connectionId, agentSessionId);
     }
 
-    private record ExecutionBinding(String terminalSessionId, String connectionId, String agentSessionId) {
+    private record ExecutionBinding(
+            String ownerId,
+            String terminalSessionId,
+            String connectionId,
+            String agentSessionId
+    ) {
     }
 
     private Map<String, Object> executeBoundCommand(
             String command,
+            String ownerId,
             String terminalSessionId,
             String connectionId,
             String agentSessionId
@@ -140,13 +153,20 @@ public class SshExecuteAdkTool {
 
         notifyObserver(agentSessionId, ExecutionEvent.running(toolCallId, command, startedAt));
 
+        if (ownerId == null || ownerId.isBlank()) {
+            log.warn("[executeCommand] 设备身份为空，拒绝执行命令");
+            return failureResult(toolCallId, agentSessionId, command, startedAt,
+                    "AI 请求缺少可信设备身份，无法执行 SSH 命令。");
+        }
+
         if (terminalSessionId == null || terminalSessionId.isEmpty()) {
             log.warn("[executeCommand] 终端会话ID为空，无法执行命令");
             return failureResult(toolCallId, agentSessionId, command, startedAt,
                     "未绑定 SSH 终端会话。请先打开 SSH 终端连接。");
         }
 
-        TerminalSessionEntity terminalSession = sshTerminalService.getTerminalSession(terminalSessionId);
+        TerminalSessionEntity terminalSession = sshTerminalService.getTerminalSession(
+                ownerId, terminalSessionId);
         if (terminalSession == null || !terminalSession.isActive()) {
             log.warn("[executeCommand] 终端会话不存在: {}", terminalSessionId);
             return failureResult(toolCallId, agentSessionId, command, startedAt,
@@ -173,7 +193,7 @@ public class SshExecuteAdkTool {
 
             // AI 命令通过隔离执行协议返回真实退出码，避免仅凭输出文本猜测成功与否。
             CommandExecutionResult execution = sshTerminalService.executeCommandWithResult(
-                    terminalSessionId, command);
+                    ownerId, terminalSessionId, command);
             String output = execution.output();
 
             log.info("SSH 命令执行完成: outputLength={}, exitCode={}, timedOut={}, exitCodeKnown={}, output={}",

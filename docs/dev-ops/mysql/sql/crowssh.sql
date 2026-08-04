@@ -1,3 +1,16 @@
+CREATE TABLE `device_principal` (
+                                    `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+                                    `principal_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '设备身份ID',
+                                    `token_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '访问令牌SHA-256哈希',
+                                    `status` tinyint NOT NULL DEFAULT '1' COMMENT '状态:0-禁用,1-有效',
+                                    `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                    `revoked_at` datetime DEFAULT NULL COMMENT '撤销时间',
+                                    PRIMARY KEY (`id`),
+                                    UNIQUE KEY `uk_principal_id` (`principal_id`),
+                                    UNIQUE KEY `uk_token_hash` (`token_hash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='客户端设备身份表';
+
+
 CREATE TABLE `ssh_connection` (
                                   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
                                   `connection_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '连接唯一标识(UUID)',
@@ -10,7 +23,7 @@ CREATE TABLE `ssh_connection` (
                                   `private_key` longtext COLLATE utf8mb4_unicode_ci COMMENT '私钥内容(加密存储)',
                                   `encrypted` tinyint NOT NULL DEFAULT '1' COMMENT '是否加密:0-否,1-是',
                                   `status` tinyint NOT NULL DEFAULT '0' COMMENT '连接状态:0-未连接,1-已连接,2-连接中,3-连接失败',
-                                  `user_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '用户ID',
+                                  `user_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '设备身份ID',
                                   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                                   `deleted` tinyint NOT NULL DEFAULT '0' COMMENT '逻辑删除:0-未删除,1-已删除',

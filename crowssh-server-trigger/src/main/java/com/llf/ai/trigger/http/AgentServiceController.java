@@ -1,6 +1,5 @@
 package com.llf.ai.trigger.http;
 
-import com.llf.ai.api.IAgentService;
 import com.llf.ai.api.dto.*;
 import com.llf.ai.api.response.Response;
 import com.llf.ai.cases.IAIAgentReActServiceCase;
@@ -13,14 +12,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
+import java.security.Principal;
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/")
-@CrossOrigin(origins = "*")
-public class AgentServiceController implements IAgentService {
+public class AgentServiceController {
 
     @Resource
     private IChatService chatService;
@@ -29,7 +28,6 @@ public class AgentServiceController implements IAgentService {
     private IAIAgentReActServiceCase aiAgentReActServiceCase;
 
     @RequestMapping(value = "query_ai_agent_config_list", method = RequestMethod.GET)
-    @Override
     public Response<List<AiAgentConfigResponseDTO>> queryAiAgentConfigList() {
         try {
             log.info("查询智能体配置列表");
@@ -65,15 +63,18 @@ public class AgentServiceController implements IAgentService {
     }
 
     @RequestMapping(value = "create_session", method = RequestMethod.POST)
-    @Override
-    public Response<CreateSessionResponseDTO> createSession(@RequestBody CreateSessionRequestDTO requestDTO) {
+    public Response<CreateSessionResponseDTO> createSession(
+            @RequestBody CreateSessionRequestDTO requestDTO,
+            Principal principal
+    ) {
+        String ownerId = principal.getName();
         try {
             log.info("创建会话 agentId:{} userId:{} connectionId:{} terminalSessionId:{}",
-                    requestDTO.getAgentId(), requestDTO.getUserId(), requestDTO.getConnectionId(),
+                    requestDTO.getAgentId(), ownerId, requestDTO.getConnectionId(),
                     requestDTO.getTerminalSessionId());
             String sessionId = chatService.createSession(
                     requestDTO.getAgentId(),
-                    requestDTO.getUserId(),
+                    ownerId,
                     requestDTO.getConnectionId(),
                     requestDTO.getTerminalSessionId()
             );
@@ -93,7 +94,7 @@ public class AgentServiceController implements IAgentService {
                     .info(e.getInfo())
                     .build();
         } catch (Exception e) {
-            log.error("创建会话失败 agentId:{} userId:{}", requestDTO.getAgentId(), requestDTO.getUserId(), e);
+            log.error("创建会话失败 agentId:{} userId:{}", requestDTO.getAgentId(), ownerId, e);
             return Response.<CreateSessionResponseDTO>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(ResponseCode.UN_ERROR.getInfo())
@@ -102,27 +103,31 @@ public class AgentServiceController implements IAgentService {
     }
 
     @RequestMapping(value = "create_session", method = RequestMethod.GET)
-    public Response<CreateSessionResponseDTO> createSession(@RequestParam("agentId") String agentId, @RequestParam("userId") String userId) {
+    public Response<CreateSessionResponseDTO> createSession(
+            @RequestParam("agentId") String agentId,
+            Principal principal
+    ) {
         CreateSessionRequestDTO requestDTO = new CreateSessionRequestDTO();
         requestDTO.setAgentId(agentId);
-        requestDTO.setUserId(userId);
-        return createSession(requestDTO);
+        return createSession(requestDTO, principal);
     }
 
     @RequestMapping(value = "chat", method = RequestMethod.POST)
-    @Override
-    public Response<ChatResponseDTO> chat(@RequestBody ChatRequestDTO requestDTO) {
+    public Response<ChatResponseDTO> chat(@RequestBody ChatRequestDTO requestDTO,
+                                          Principal principal) {
+        String ownerId = principal.getName();
         try {
-            log.info("智能体对话 agentId:{} userId:{}", requestDTO.getAgentId(), requestDTO.getUserId());
+            log.info("智能体对话 agentId:{} userId:{}", requestDTO.getAgentId(), ownerId);
             String sessionId = chatService.resolveSession(
                     requestDTO.getAgentId(),
-                    requestDTO.getUserId(),
+                    ownerId,
                     requestDTO.getSessionId(),
                     requestDTO.getConnectionId(),
                     requestDTO.getTerminalSessionId()
             );
 
-            List<String> messages = chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
+            List<String> messages = chatService.handleMessage(
+                    requestDTO.getAgentId(), ownerId, sessionId, requestDTO.getMessage());
 
             ChatResponseDTO responseDTO = new ChatResponseDTO();
             responseDTO.setContent(String.join("\n", messages));
@@ -139,7 +144,7 @@ public class AgentServiceController implements IAgentService {
                     .info(e.getInfo())
                     .build();
         } catch (Exception e) {
-            log.error("智能体对话失败 agentId:{} userId:{}", requestDTO.getAgentId(), requestDTO.getUserId(), e);
+            log.error("智能体对话失败 agentId:{} userId:{}", requestDTO.getAgentId(), ownerId, e);
             return Response.<ChatResponseDTO>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(ResponseCode.UN_ERROR.getInfo())
@@ -151,9 +156,10 @@ public class AgentServiceController implements IAgentService {
      * AI 流式事件接口。Trigger 层仅负责 HTTP 入参和出参，ReAct 编排由 case 层完成。
      */
     @RequestMapping(value = "chat_stream", method = RequestMethod.POST)
-    @Override
-    public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO requestDTO) {
+    public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO requestDTO,
+                                          Principal principal) {
         try {
+            requestDTO.setUserId(principal.getName());
             log.info("ReAct 流式对话 agentId:{} userId:{} sessionId:{} connectionId:{} terminalSessionId:{} messageLength:{}",
                     requestDTO.getAgentId(), requestDTO.getUserId(), requestDTO.getSessionId(),
                     requestDTO.getConnectionId(),

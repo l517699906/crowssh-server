@@ -22,17 +22,17 @@ public interface ISshConnectionRepository {
     /**
      * 更新SSH连接配置
      */
-    void updateConnection(SshConnectionEntity entity);
+    void updateConnection(String ownerId, SshConnectionEntity entity);
 
     /**
      * 删除SSH连接配置
      */
-    void deleteConnection(String connectionId);
+    void deleteConnection(String ownerId, String connectionId);
 
     /**
      * 根据连接ID查询
      */
-    SshConnectionEntity queryConnectionById(String connectionId);
+    SshConnectionEntity queryConnectionById(String ownerId, String connectionId);
 
     /**
      * 查询用户的所有连接

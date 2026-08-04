@@ -22,7 +22,7 @@ public interface ISshConnectionDAO extends BaseMapper<SshConnectionPO> {
      * @param po 连接配置对象
      * @return 影响行数
      */
-    default int update(SshConnectionPO po) {
+    default int update(String ownerId, SshConnectionPO po) {
         LambdaUpdateWrapper<SshConnectionPO> wrapper = Wrappers.lambdaUpdate(SshConnectionPO.class)
                 .set(SshConnectionPO::getConnectionName, po.getConnectionName())
                 .set(SshConnectionPO::getHost, po.getHost())
@@ -33,6 +33,7 @@ public interface ISshConnectionDAO extends BaseMapper<SshConnectionPO> {
                 .set(SshConnectionPO::getPrivateKey, po.getPrivateKey())
                 .set(SshConnectionPO::getEncrypted, po.getEncrypted())
                 .set(SshConnectionPO::getStatus, po.getStatus())
+                .eq(SshConnectionPO::getUserId, ownerId)
                 .eq(SshConnectionPO::getConnectionId, po.getConnectionId());
         return update(wrapper);
     }
@@ -43,8 +44,9 @@ public interface ISshConnectionDAO extends BaseMapper<SshConnectionPO> {
      * @param connectionId 连接唯一标识
      * @return 影响行数
      */
-    default int delete(String connectionId) {
+    default int delete(String ownerId, String connectionId) {
         return delete(Wrappers.<SshConnectionPO>lambdaQuery()
+                .eq(SshConnectionPO::getUserId, ownerId)
                 .eq(SshConnectionPO::getConnectionId, connectionId));
     }
 
@@ -54,8 +56,9 @@ public interface ISshConnectionDAO extends BaseMapper<SshConnectionPO> {
      * @param connectionId 连接唯一标识
      * @return 连接配置对象
      */
-    default SshConnectionPO queryByConnectionId(String connectionId) {
+    default SshConnectionPO queryByConnectionId(String ownerId, String connectionId) {
         return selectOne(Wrappers.<SshConnectionPO>lambdaQuery()
+                .eq(SshConnectionPO::getUserId, ownerId)
                 .eq(SshConnectionPO::getConnectionId, connectionId));
     }
 

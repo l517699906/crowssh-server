@@ -19,4 +19,5 @@ public class SftpFileEntity {
     private boolean directory;
     private long size;
     private long modifiedAt;
+    private String permissions;
 }

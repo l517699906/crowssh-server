@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import java.security.Principal;
 
 /**
  * SSH终端操作 HTTP 控制器
@@ -19,14 +20,16 @@ import javax.annotation.Resource;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/ssh/terminal")
-@CrossOrigin(origins = "*")
-public class SshTerminalController implements com.llf.ai.api.ISshTerminalService {
+public class SshTerminalController {
 
     @Resource
     private ISshTerminalService sshTerminalDomainService;
 
     @RequestMapping(value = "open", method = RequestMethod.POST)
-    public Response<TerminalOpenResponseDTO> openTerminal(@RequestBody TerminalOpenRequestDTO requestDTO) {
+    public Response<TerminalOpenResponseDTO> openTerminal(
+            @RequestBody TerminalOpenRequestDTO requestDTO,
+            Principal principal
+    ) {
         try {
             log.info("打开终端会话 connectionId={}", requestDTO.getConnectionId());
 
@@ -34,11 +37,12 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
             int rows = requestDTO.getRows() != null ? requestDTO.getRows() : 24;
 
             TerminalSessionEntity entity = sshTerminalDomainService.openTerminal(
-                    requestDTO.getConnectionId(), cols, rows);
+                    principal.getName(), requestDTO.getConnectionId(), cols, rows);
 
             // 等待 MOTD 积累完后 drain 缓冲区，作为 initialOutput 返回
             // 这样前端不依赖轮询获取初始输出，避免时序问题导致"有时显示有时不显示"
-            String initialOutput = waitForInitialOutput(entity.getSessionId(), 2000);
+            String initialOutput = waitForInitialOutput(
+                    principal.getName(), entity.getSessionId(), 2000);
 
             TerminalOpenResponseDTO response = TerminalOpenResponseDTO.builder()
                     .sessionId(entity.getSessionId())
@@ -71,9 +75,9 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
      * openTerminal 已等首数据+200ms，这里只需 drain 缓冲区
      * 不做换行符转换，xterm.js 自己处理 \r 和 \n
      */
-    private String waitForInitialOutput(String sessionId, long timeoutMs) {
+    private String waitForInitialOutput(String ownerId, String sessionId, long timeoutMs) {
         // drain 缓冲区：openTerminal 已等待首数据+200ms，MOTD 应该已完整
-        String output = sshTerminalDomainService.readTerminal(sessionId);
+        String output = sshTerminalDomainService.readTerminal(ownerId, sessionId);
         if (output == null || output.isEmpty()) {
             return "";
         }
@@ -83,7 +87,7 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
             Thread.sleep(50);
         } catch (InterruptedException ignored) {
         }
-        String more = sshTerminalDomainService.readTerminal(sessionId);
+        String more = sshTerminalDomainService.readTerminal(ownerId, sessionId);
         if (more != null && !more.isEmpty()) {
             output += more;
         }
@@ -92,10 +96,13 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
     }
 
     @RequestMapping(value = "exec", method = RequestMethod.POST)
-    public Response<TerminalExecResponseDTO> execCommand(@RequestBody TerminalExecRequestDTO requestDTO) {
+    public Response<TerminalExecResponseDTO> execCommand(
+            @RequestBody TerminalExecRequestDTO requestDTO,
+            Principal principal
+    ) {
         try {
             String output = sshTerminalDomainService.executeCommand(
-                    requestDTO.getSessionId(), requestDTO.getCommand());
+                    principal.getName(), requestDTO.getSessionId(), requestDTO.getCommand());
 
             TerminalExecResponseDTO response = TerminalExecResponseDTO.builder()
                     .output(output)
@@ -122,9 +129,13 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
     }
 
     @RequestMapping(value = "write", method = RequestMethod.POST)
-    public Response<Void> writeToTerminal(@RequestBody TerminalWriteRequestDTO requestDTO) {
+    public Response<Void> writeToTerminal(
+            @RequestBody TerminalWriteRequestDTO requestDTO,
+            Principal principal
+    ) {
         try {
-            sshTerminalDomainService.writeTerminal(requestDTO.getSessionId(), requestDTO.getInput());
+            sshTerminalDomainService.writeTerminal(
+                    principal.getName(), requestDTO.getSessionId(), requestDTO.getInput());
             return Response.<Void>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
@@ -145,9 +156,12 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
     }
 
     @RequestMapping(value = "read", method = RequestMethod.GET)
-    public Response<TerminalReadResponseDTO> readFromTerminal(@RequestParam("sessionId") String sessionId) {
+    public Response<TerminalReadResponseDTO> readFromTerminal(
+            @RequestParam("sessionId") String sessionId,
+            Principal principal
+    ) {
         try {
-            String output = sshTerminalDomainService.readTerminal(sessionId);
+            String output = sshTerminalDomainService.readTerminal(principal.getName(), sessionId);
             TerminalReadResponseDTO response = TerminalReadResponseDTO.builder()
                     .output(output != null ? output : "")
                     .build();
@@ -172,10 +186,14 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
     }
 
     @RequestMapping(value = "resize", method = RequestMethod.POST)
-    public Response<Void> resizeTerminal(@RequestBody TerminalResizeRequestDTO requestDTO) {
+    public Response<Void> resizeTerminal(
+            @RequestBody TerminalResizeRequestDTO requestDTO,
+            Principal principal
+    ) {
         try {
             sshTerminalDomainService.resizeTerminal(
-                    requestDTO.getSessionId(), requestDTO.getCols(), requestDTO.getRows());
+                    principal.getName(), requestDTO.getSessionId(),
+                    requestDTO.getCols(), requestDTO.getRows());
 
             return Response.<Void>builder()
                     .code(ResponseCode.SUCCESS.getCode())
@@ -191,10 +209,11 @@ public class SshTerminalController implements com.llf.ai.api.ISshTerminalService
     }
 
     @RequestMapping(value = "close", method = RequestMethod.POST)
-    public Response<Void> closeTerminal(@RequestParam("sessionId") String sessionId) {
+    public Response<Void> closeTerminal(@RequestParam("sessionId") String sessionId,
+                                        Principal principal) {
         try {
             log.info("关闭终端会话 sessionId={}", sessionId);
-            sshTerminalDomainService.closeTerminal(sessionId);
+            sshTerminalDomainService.closeTerminal(principal.getName(), sessionId);
 
             return Response.<Void>builder()
                     .code(ResponseCode.SUCCESS.getCode())
