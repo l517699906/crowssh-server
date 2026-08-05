@@ -34,6 +34,10 @@ public class TerminalSessionPort implements ITerminalSessionPort {
     private static final String TERMINAL_TYPE = "xterm-256color";
     private static final long COMMAND_CANCEL_GRACE_MS = 2000;
     private static final long OUTPUT_DRAIN_TIMEOUT_MS = 2000;
+    private static final long SHELL_INTEGRATION_READY_TIMEOUT_MS = 2000;
+    private static final long SHELL_INTEGRATION_OUTPUT_SETTLE_MS = 200;
+    private static final String WORKING_DIRECTORY_SHELL_INTEGRATION_READY_SEQUENCE =
+            "\u001B]777;crowssh-shell-integration-ready\u0007";
     private static final String WORKING_DIRECTORY_SHELL_INTEGRATION =
             " __crowssh_emit_cwd() { printf '\\033]7;file://crowssh%s\\007' \"$PWD\"; }; "
                     + "if [ -n \"${BASH_VERSION:-}\" ]; then "
@@ -43,6 +47,7 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                     + "autoload -Uz add-zsh-hook >/dev/null 2>&1 "
                     + "&& add-zsh-hook precmd __crowssh_emit_cwd; "
                     + "else PS1='$(__crowssh_emit_cwd)'\"${PS1:-}\"; fi; "
+                    + "printf '\\033]777;crowssh-shell-integration-ready\\007'; "
                     + "__crowssh_emit_cwd";
 
     private final SshSessionPort sshSessionService;
@@ -104,32 +109,17 @@ public class TerminalSessionPort implements ITerminalSessionPort {
             outputBuffers.put(sessionId, new StringBuilder());
             workingDirectoryTrackers.put(sessionId, new TerminalWorkingDirectoryTracker(
                     workingDirectory -> updateWorkingDirectory(sessionId, workingDirectory)));
-            shellIntegrationOutputFilters.put(sessionId,
-                    new OneShotTerminalOutputFilter(WORKING_DIRECTORY_SHELL_INTEGRATION));
             // 启动输出读取线程，持续读取 shell 输出到缓冲区
             startOutputReader(sessionId, in);
-            installWorkingDirectoryTracking(sessionId, out);
 
-            // 等待 Shell 首次输出到达 + 额外等待让 MOTD 完整积累
-            // 然后消费缓冲区，作为 initialOutput 返回给前端
-            // 这样前端不再依赖轮询获取初始输出，彻底解决"有时显示有时不显示"的问题
             StringBuilder buffer = outputBuffers.get(sessionId);
-            long waitDeadline = System.currentTimeMillis() + 3000; // 最多等 3s 等首数据
-            try {
-                // 阶段1：等首数据到达
-                while (System.currentTimeMillis() < waitDeadline) {
-                    synchronized (buffer) {
-                        if (!buffer.isEmpty()) {
-                            break;
-                        }
-                    }
-                    Thread.sleep(30);
-                }
-                // 阶段2：额外等 200ms 让 MOTD/prompt 完整到达
-                Thread.sleep(200);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
+            waitForInitialShellOutput(buffer);
+
+            OneShotTerminalOutputFilter outputFilter =
+                    new OneShotTerminalOutputFilter(WORKING_DIRECTORY_SHELL_INTEGRATION_READY_SEQUENCE);
+            shellIntegrationOutputFilters.put(sessionId, outputFilter);
+            installWorkingDirectoryTracking(sessionId, out);
+            waitForShellIntegrationReady(sessionId, outputFilter);
 
             log.info("终端会话打开成功 sessionId={} connectionId={}", sessionId, connectionId);
             return sessionId;
@@ -458,6 +448,44 @@ public class TerminalSessionPort implements ITerminalSessionPort {
         output.write((WORKING_DIRECTORY_SHELL_INTEGRATION + "\r").getBytes(StandardCharsets.UTF_8));
         output.flush();
         log.debug("已安装终端工作目录跟踪 sessionId={}", sessionId);
+    }
+
+    private void waitForInitialShellOutput(StringBuilder buffer) {
+        long waitDeadline = System.currentTimeMillis() + 3000;
+        try {
+            while (System.currentTimeMillis() < waitDeadline) {
+                synchronized (buffer) {
+                    if (!buffer.isEmpty()) {
+                        break;
+                    }
+                }
+                Thread.sleep(30);
+            }
+            Thread.sleep(200);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void waitForShellIntegrationReady(
+            String sessionId,
+            OneShotTerminalOutputFilter outputFilter) {
+        long waitDeadline = System.currentTimeMillis() + SHELL_INTEGRATION_READY_TIMEOUT_MS;
+        try {
+            while (System.currentTimeMillis() < waitDeadline && !outputFilter.isComplete()) {
+                Thread.sleep(10);
+            }
+            if (outputFilter.isComplete()) {
+                Thread.sleep(SHELL_INTEGRATION_OUTPUT_SETTLE_MS);
+            }
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+
+        outputFilter.release();
+        if (!outputFilter.isComplete()) {
+            log.warn("终端 Shell 集成安装确认超时，已恢复输出 sessionId={}", sessionId);
+        }
     }
 
     private void updateWorkingDirectory(String sessionId, String workingDirectory) {

@@ -1,6 +1,7 @@
 package com.llf.ai.cases.react.factory;
 
 import com.llf.ai.api.dto.ReActResultDTO;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionEvent;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * ReAct 动态上下文
@@ -100,6 +102,10 @@ public class DefaultReActFactory {
          */
         @Builder.Default
         private List<Map<String, Object>> currentToolResults = new ArrayList<>();
+
+        /** 当前轮由真实工具边界发布的执行事件 */
+        @Builder.Default
+        private List<ToolExecutionEvent> currentToolExecutionEvents = new CopyOnWriteArrayList<>();
 
         // ══════════════════════════════════════════════════════════
         //  ReAct 循环状态
@@ -211,8 +217,15 @@ public class DefaultReActFactory {
         public void resetRoundBuffers() {
             currentToolCalls.clear();
             currentToolResults.clear();
+            currentToolExecutionEvents.clear();
             assistantContent.setLength(0);
             assistantReasoning.setLength(0);
+        }
+
+        public void recordToolExecutionEvent(ToolExecutionEvent event) {
+            if (event != null) {
+                currentToolExecutionEvents.add(event);
+            }
         }
 
         public void appendMessage(Map<String, Object> message) {

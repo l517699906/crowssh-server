@@ -137,7 +137,8 @@ public class SshTerminalService implements ISshTerminalService {
 
         TerminalSessionEntity entity = getActiveSession(ownerId, sessionId);
         if (entity == null || !sessionCache.remove(sessionId, entity)) {
-            throw new IllegalArgumentException("终端会话不存在或已关闭");
+            log.info("终端会话已关闭或不存在，忽略重复关闭 sessionId={}", sessionId);
+            return;
         }
         entity.setStatus(2);
         terminalSessionService.closeSession(sessionId);

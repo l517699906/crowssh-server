@@ -12,7 +12,6 @@ import javax.annotation.Resource;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -36,9 +35,6 @@ public class SshExecuteAdkTool {
 
     // google-adk-spring-ai 1.2.0 转换工具时不会传递 ToolContext，因此由请求线程显式绑定执行资源。
     private static final ThreadLocal<ExecutionBinding> currentExecutionBinding = new ThreadLocal<>();
-
-    // AI session ID -> 当前 SSE 请求观察器。请求绑定显式提供 session ID。
-    private static final Map<String, ExecutionObserver> executionObserversBySession = new ConcurrentHashMap<>();
 
     // 危险命令模式（需要用户确认），这些命令，也可以设计成配置来使用
     private static final Pattern DANGEROUS_PATTERN = Pattern.compile(
@@ -73,16 +69,23 @@ public class SshExecuteAdkTool {
         currentExecutionBinding.remove();
     }
 
-    public static void setExecutionObserver(String agentSessionId, ExecutionObserver observer) {
-        if (agentSessionId != null && !agentSessionId.isEmpty()) {
-            executionObserversBySession.put(agentSessionId, observer);
+    /**
+     * 获取当前工具调用线程绑定的可信 SSH 上下文。
+     */
+    public static ExecutionBinding requireCurrentExecutionBinding() {
+        ExecutionBinding binding = currentExecutionBinding.get();
+        if (binding == null
+                || binding.ownerId() == null || binding.ownerId().isBlank()
+                || binding.terminalSessionId() == null || binding.terminalSessionId().isBlank()
+                || binding.connectionId() == null || binding.connectionId().isBlank()) {
+            throw new IllegalStateException("AI 请求未绑定可信 SSH 资源，请先打开正确的 SSH 终端");
         }
+        return binding;
     }
 
-    public static void clearExecutionObserver(String agentSessionId, ExecutionObserver observer) {
-        if (agentSessionId != null && !agentSessionId.isEmpty()) {
-            executionObserversBySession.remove(agentSessionId, observer);
-        }
+    static String currentAgentSessionId() {
+        ExecutionBinding binding = currentExecutionBinding.get();
+        return binding == null ? null : binding.agentSessionId();
     }
 
     @Annotations.Schema(
@@ -129,7 +132,7 @@ public class SshExecuteAdkTool {
                 command, ownerId, terminalSessionId, connectionId, agentSessionId);
     }
 
-    private record ExecutionBinding(
+    public record ExecutionBinding(
             String ownerId,
             String terminalSessionId,
             String connectionId,
@@ -151,7 +154,12 @@ public class SshExecuteAdkTool {
         log.info("[executeCommand] sessionId={}, terminalSessionId={}, connectionId={}, command={}",
                 agentSessionId, terminalSessionId, connectionId, command);
 
-        notifyObserver(agentSessionId, ExecutionEvent.running(toolCallId, command, startedAt));
+        Map<String, Object> arguments = Map.of("command", command == null ? "" : command);
+        ToolExecutionObserverRegistry.publish(
+                agentSessionId,
+                ToolExecutionEvent.running(
+                        toolCallId, "executeCommand", arguments, startedAt)
+        );
 
         if (ownerId == null || ownerId.isBlank()) {
             log.warn("[executeCommand] 设备身份为空，拒绝执行命令");
@@ -224,15 +232,20 @@ public class SshExecuteAdkTool {
             }
 
             long completedAt = System.currentTimeMillis();
-            notifyObserver(agentSessionId, ExecutionEvent.completed(
-                    toolCallId,
-                    command,
-                    success ? "success" : "error",
-                    startedAt,
-                    completedAt,
-                    output.length(),
-                    suggestion
-            ));
+            ToolExecutionObserverRegistry.publish(
+                    agentSessionId,
+                    ToolExecutionEvent.completed(
+                            toolCallId,
+                            "executeCommand",
+                            arguments,
+                            result,
+                            success ? "success" : "error",
+                            startedAt,
+                            completedAt,
+                            output.length(),
+                            suggestion
+                    )
+            );
 
             return result;
 
@@ -251,20 +264,26 @@ public class SshExecuteAdkTool {
             long startedAt,
             String message) {
         long completedAt = System.currentTimeMillis();
-        notifyObserver(agentSessionId, ExecutionEvent.completed(
-                toolCallId,
-                command,
-                "error",
-                startedAt,
-                completedAt,
-                0,
-                message
-        ));
-        return Map.of(
+        Map<String, Object> result = Map.of(
                 "success", false,
                 "output", message,
-                "command", command
+                "command", command == null ? "" : command
         );
+        ToolExecutionObserverRegistry.publish(
+                agentSessionId,
+                ToolExecutionEvent.completed(
+                        toolCallId,
+                        "executeCommand",
+                        Map.of("command", command == null ? "" : command),
+                        result,
+                        "error",
+                        startedAt,
+                        completedAt,
+                        0,
+                        message
+                )
+        );
+        return result;
     }
 
     private static String stateValue(ToolContext toolContext, String key) {
@@ -273,115 +292,6 @@ public class SshExecuteAdkTool {
             return null;
         }
         return value.toString();
-    }
-
-    private void notifyObserver(String agentSessionId, ExecutionEvent event) {
-        ExecutionObserver observer = agentSessionId == null
-                ? null
-                : executionObserversBySession.get(agentSessionId);
-        if (observer == null) {
-            return;
-        }
-        try {
-            observer.onExecutionEvent(event);
-        } catch (Exception e) {
-            log.warn("工具执行状态通知失败: toolCallId={}, reason={}", event.getToolCallId(), e.getMessage());
-        }
-    }
-
-    @FunctionalInterface
-    public interface ExecutionObserver {
-        void onExecutionEvent(ExecutionEvent event);
-    }
-
-    public static final class ExecutionEvent {
-        private final String toolCallId;
-        private final String toolName;
-        private final String command;
-        private final String status;
-        private final long startedAt;
-        private final long completedAt;
-        private final long durationMs;
-        private final int outputLength;
-        private final String errorMessage;
-
-        private ExecutionEvent(
-                String toolCallId,
-                String command,
-                String status,
-                long startedAt,
-                long completedAt,
-                int outputLength,
-                String errorMessage) {
-            this.toolCallId = toolCallId;
-            this.toolName = "executeCommand";
-            this.command = command;
-            this.status = status;
-            this.startedAt = startedAt;
-            this.completedAt = completedAt;
-            this.durationMs = completedAt > 0 ? Math.max(0, completedAt - startedAt) : 0;
-            this.outputLength = outputLength;
-            this.errorMessage = errorMessage;
-        }
-
-        public static ExecutionEvent running(String toolCallId, String command, long startedAt) {
-            return new ExecutionEvent(toolCallId, command, "running", startedAt, 0, 0, null);
-        }
-
-        public static ExecutionEvent completed(
-                String toolCallId,
-                String command,
-                String status,
-                long startedAt,
-                long completedAt,
-                int outputLength,
-                String errorMessage) {
-            return new ExecutionEvent(
-                    toolCallId,
-                    command,
-                    status,
-                    startedAt,
-                    completedAt,
-                    outputLength,
-                    errorMessage
-            );
-        }
-
-        public String getToolCallId() {
-            return toolCallId;
-        }
-
-        public String getToolName() {
-            return toolName;
-        }
-
-        public String getCommand() {
-            return command;
-        }
-
-        public String getStatus() {
-            return status;
-        }
-
-        public long getStartedAt() {
-            return startedAt;
-        }
-
-        public long getCompletedAt() {
-            return completedAt;
-        }
-
-        public long getDurationMs() {
-            return durationMs;
-        }
-
-        public int getOutputLength() {
-            return outputLength;
-        }
-
-        public String getErrorMessage() {
-            return errorMessage;
-        }
     }
 
     /**

@@ -13,6 +13,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
@@ -54,6 +55,12 @@ public class DefaultArmoryFactory {
          * LLM ChatModel
          */
         private ChatModel chatModel;
+
+        /**
+         * ChatModel 节点创建、等待 Agent 节点注册到 ADK 的 Spring AI 工具。
+         */
+        @Builder.Default
+        private List<ToolCallback> toolCallbacks = new ArrayList<>();
 
         /**
          * 智能体配置组

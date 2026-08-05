@@ -31,7 +31,7 @@ public class StdioToolMcpCreateService implements ToolMcpCreateService {
                 .build();
 
         McpSyncClient mcpSyncClient = McpClient.sync(new StdioClientTransport(stdioParams, new JacksonMcpJsonMapper(new ObjectMapper())))
-                .requestTimeout(Duration.ofSeconds(stdioConfig.getRequestTimeout())).build();
+                .requestTimeout(Duration.ofMillis(stdioConfig.getRequestTimeout())).build();
 
         McpSchema.InitializeResult initialize = mcpSyncClient.initialize();
 

@@ -2,7 +2,6 @@ package com.llf.ai.cases.react.node;
 
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import com.google.adk.events.Event;
-import com.google.adk.events.EventActions;
 import com.google.genai.types.Content;
 import com.llf.ai.api.dto.ChatRequestDTO;
 import com.llf.ai.api.dto.ReActResultDTO;
@@ -11,15 +10,16 @@ import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.IPromptService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.Resource;
-import java.util.concurrent.CancellationException;
-import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 
 /**
  * AI 调用节点（ReAct 循环核心）
@@ -27,20 +27,18 @@ import java.util.Map;
  * <p>职责：
  * 1. 调用 ADK runner.runAsync() 获取事件流
  * 2. 处理文本内容，发送 SSE 事件
- * 3. 从 event.actions().stateDelta() 检测工具执行结果
- * 4. 如果有工具调用：存储到上下文，发送 SSE 事件，路由到 ToolCallNode
+ * 3. 消费工具边界发布的结构化执行事件
+ * 4. 如果有已完成工具调用：存储结果并路由到 ToolCallNode
  * 5. 如果无工具调用：路由到 LoopDecisionNode
  *
- * <p>核心修复：
- * SpringAI 的 ChatModel.call() 自动执行工具，导致 event.functionCalls() 永远为空。
- * 修复方案：从 event.actions().stateDelta() 检测工具执行结果。
- * stateDelta 包含工具输出（key = output-key, value = 执行结果）。
+ * <p>ADK runner 会在单次调用内完成模型调用、工具执行和最终响应。
+ * stateDelta 是 Agent 状态，不作为工具调用或工具结果的事实来源。
  *
  * <p>ReAct 循环流程：
  * <pre>
  * RootNode
  *   └→ AiCallNode（调用 ADK runner，解析事件）
- *         ├→ [stateDelta 有结果] ToolCallNode → AiCallNode（循环）
+ *         ├→ [有结构化工具结果] ToolCallNode → LoopDecisionNode
  *         └→ [无工具调用] LoopDecisionNode → UserFeedbackNode
  * </pre>
  *
@@ -55,11 +53,6 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
     @Resource
     private IPromptService promptService;
-
-    /** tool name 映射：stateDelta key -> tool name */
-    private static final Map<String, String> STATE_DELTA_TOOL_MAPPING = Map.of(
-            "ssh_result", "executeCommand"
-    );
 
     @Override
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -129,66 +122,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     sendTextEvent(dynamicContext, eventText, textAccumulator.toString());
                 }
 
-                // 6.2 从 stateDelta 检测工具执行结果
-                EventActions actions = event.actions();
-                if (actions != null) {
-                    Map<String, Object> stateDelta = actions.stateDelta();
-                    if (stateDelta != null && !stateDelta.isEmpty()) {
-                        log.info("检测到 stateDelta 变更: keys={}", stateDelta.keySet());
-
-                        for (Map.Entry<String, Object> entry : stateDelta.entrySet()) {
-                            String stateKey = entry.getKey();
-                            Object stateValue = entry.getValue();
-
-                            // 跳过内部状态键（如 "REMOVED"）
-                            if ("REMOVED".equals(stateValue)) {
-                                continue;
-                            }
-
-                            String toolName = resolveToolName(stateKey);
-                            String resultContent = formatStateValue(stateValue);
-                            String toolCallId = "call_" + stateKey + "_" + System.currentTimeMillis();
-
-                            log.info("工具执行结果: stateKey={}, toolName={}, result_length={}",
-                                    stateKey, toolName, resultContent.length());
-
-                            // 存储工具调用信息
-                            Map<String, Object> toolCallInfo = new HashMap<>();
-                            toolCallInfo.put("id", toolCallId);
-                            toolCallInfo.put("name", toolName);
-                            toolCallInfo.put("args", "");
-                            dynamicContext.getCurrentToolCalls().add(toolCallInfo);
-
-                            // 存储工具结果
-                            Map<String, Object> toolResultInfo = new HashMap<>();
-                            toolResultInfo.put("id", toolCallId);
-                            toolResultInfo.put("name", toolName);
-                            toolResultInfo.put("content", resultContent);
-                            toolResultInfo.put("status", "success");
-                            dynamicContext.getCurrentToolResults().add(toolResultInfo);
-
-                            // SSH 工具由 ExecutionObserver 发送含命令与耗时的精确事件，避免重复。
-                            if (!"executeCommand".equals(toolName)) {
-                                sendToolCallEvent(dynamicContext, toolCallId, toolName, "executing");
-                                sendToolResultEvent(dynamicContext, toolCallId, resultContent, "success");
-                            }
-
-                            roundToolCalls++;
-                            dynamicContext.incrementTotalToolCalls();
-
-                            // 记录执行的命令到上下文
-                            if ("executeCommand".equals(toolName) && !resultContent.isEmpty()) {
-                                recordExecutedCommand(dynamicContext, resultContent);
-                            }
-
-                            // 记录里程碑（工具结果）
-                            promptService.detectAndRecordMilestone(
-                                    dynamicContext.getSessionId(), "tool", resultContent);
-                        }
-                    }
-                }
-
-                // 6.3 记录 assistant 内容到消息历史
+                // 6.2 记录 assistant 内容到消息历史
                 if (event.content().isPresent()) {
                     Content content = event.content().get();
                     String role = content.role().orElse("assistant");
@@ -215,6 +149,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             // 请求结束后必须清除，避免线程复用时串用其他会话的 SSH 资源。
             SshExecuteAdkTool.clearCurrentTerminalSession();
         }
+
+        roundToolCalls = processCompletedToolEvents(dynamicContext);
 
         // 9. 更新步数和工具调用统计
         dynamicContext.incrementStep();
@@ -263,7 +199,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             return getBean("reactUserFeedbackNode");
         }
 
-        // 检查本轮是否有工具调用（从 stateDelta 检测到的）
+        // 只有真实完成的工具事件才进入 ToolCallNode。
         if (!dynamicContext.getCurrentToolCalls().isEmpty()) {
             log.info("检测到 {} 个工具调用，路由到 ToolCallNode",
                     dynamicContext.getCurrentToolCalls().size());
@@ -308,28 +244,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 .reduce("", String::concat);
     }
 
-    /**
-     * 从 stateDelta key 解析工具名称
-     */
-    private String resolveToolName(String stateKey) {
-        // 已知映射
-        String mapped = STATE_DELTA_TOOL_MAPPING.get(stateKey);
-        if (mapped != null) {
-            return mapped;
-        }
-
-        // 从 key 推断：去掉 _result 后缀
-        if (stateKey.endsWith("_result")) {
-            return stateKey.substring(0, stateKey.length() - 7);
-        }
-
-        return stateKey;
-    }
-
-    /**
-     * 格式化 stateDelta 值为字符串
-     */
-    private String formatStateValue(Object value) {
+    private String formatValue(Object value) {
         if (value == null) {
             return "";
         }
@@ -343,25 +258,55 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         }
     }
 
+    private int processCompletedToolEvents(DefaultReActFactory.DynamicContext dynamicContext) {
+        Map<String, ToolExecutionEvent> completedEvents = new LinkedHashMap<>();
+        for (ToolExecutionEvent event : dynamicContext.getCurrentToolExecutionEvents()) {
+            if (event != null && event.isCompleted()) {
+                completedEvents.put(event.getToolCallId(), event);
+            }
+        }
+
+        for (ToolExecutionEvent event : completedEvents.values()) {
+            String resultContent = formatValue(event.getResult());
+
+            Map<String, Object> toolCallInfo = new LinkedHashMap<>();
+            toolCallInfo.put("id", event.getToolCallId());
+            toolCallInfo.put("name", event.getToolName());
+            toolCallInfo.put("args", formatValue(event.getArguments()));
+            dynamicContext.getCurrentToolCalls().add(toolCallInfo);
+
+            Map<String, Object> toolResultInfo = new LinkedHashMap<>();
+            toolResultInfo.put("id", event.getToolCallId());
+            toolResultInfo.put("name", event.getToolName());
+            toolResultInfo.put("content", resultContent);
+            toolResultInfo.put("status", event.getStatus());
+            dynamicContext.getCurrentToolResults().add(toolResultInfo);
+
+            dynamicContext.incrementTotalToolCalls();
+            if ("executeCommand".equals(event.getToolName())) {
+                dynamicContext.addRecentCommand(event.getCommand());
+            }
+
+            promptService.detectAndRecordMilestone(
+                    dynamicContext.getSessionId(), "tool", milestoneContent(event));
+        }
+        return completedEvents.size();
+    }
+
+    private String milestoneContent(ToolExecutionEvent event) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("toolName", event.getToolName());
+        payload.put("status", event.getStatus());
+        payload.put("result", event.getResult());
+        if (event.getErrorMessage() != null && !event.getErrorMessage().isBlank()) {
+            payload.put("errorMessage", event.getErrorMessage());
+        }
+        return formatValue(payload);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  Phase 1: 动态上下文注入
     // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * 从工具结果中提取命令并记录到最近命令列表
-     */
-    private void recordExecutedCommand(DefaultReActFactory.DynamicContext dynamicContext, String toolResult) {
-        if (toolResult.length() > 1000) {
-            dynamicContext.addRecentCommand(truncate(toolResult, 80) + "...");
-        } else {
-            dynamicContext.addRecentCommand(toolResult);
-        }
-    }
-
-    private String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() > max ? s.substring(0, max) : s;
-    }
 
     /**
      * 构建注入了动态上下文的用户消息

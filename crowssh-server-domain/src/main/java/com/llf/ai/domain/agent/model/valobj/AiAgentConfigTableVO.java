@@ -92,6 +92,7 @@ public class AiAgentConfigTableVO {
                     private String name;
                     private String baseUri;
                     private String sseEndpoint;
+                    /** MCP 请求超时时间，单位毫秒。 */
                     private Integer requestTimeout = 3000;
 
                 }
@@ -99,6 +100,7 @@ public class AiAgentConfigTableVO {
                 @Data
                 public static class StdioServerParameters {
                     private String name;
+                    /** MCP 请求超时时间，单位毫秒。 */
                     private Integer requestTimeout = 3000;
                     private ServerParameters serverParameters;
 

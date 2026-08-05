@@ -8,7 +8,7 @@ import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.cases.react.node.RootNode;
 import com.llf.ai.domain.agent.model.valobj.RuntimeModelConfig;
 import com.llf.ai.domain.agent.service.IChatService;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionObserverRegistry;
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelScope;
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelService;
 import lombok.extern.slf4j.Slf4j;
@@ -107,7 +107,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         String sessionId = dynamicContext.getSessionId();
         Thread streamThread = new Thread(() -> {
             Thread heartbeatThread = startHeartbeatThread(dynamicContext, cancelStream);
-            SshExecuteAdkTool.ExecutionObserver executionObserver = executionEvent -> {
+            ToolExecutionObserverRegistry.Observer executionObserver = executionEvent -> {
+                dynamicContext.recordToolExecutionEvent(executionEvent);
                 if (!dynamicContext.getStreamActive().get()) {
                     return;
                 }
@@ -119,7 +120,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     cancelStream.run();
                 }
             };
-            SshExecuteAdkTool.setExecutionObserver(sessionId, executionObserver);
+            ToolExecutionObserverRegistry.register(sessionId, executionObserver);
 
             try (RuntimeChatModelScope ignored = runtimeChatModelService.open(
                     toRuntimeModelConfig(requestDTO.getRuntimeModel()))) {
@@ -167,7 +168,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             } finally {
                 dynamicContext.getStreamActive().set(false);
                 heartbeatThread.interrupt();
-                SshExecuteAdkTool.clearExecutionObserver(sessionId, executionObserver);
+                ToolExecutionObserverRegistry.unregister(sessionId, executionObserver);
                 requestDTO.clearRuntimeSecret();
             }
         }, "react-stream-" + sessionId);
@@ -186,9 +187,16 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     .sessionId(sessionId)
                     .streaming(false)
                     .build();
+            ToolExecutionObserverRegistry.Observer executionObserver =
+                    dynamicContext::recordToolExecutionEvent;
+            ToolExecutionObserverRegistry.register(sessionId, executionObserver);
 
-            ReActResultDTO result = rootNode.apply(requestDTO, dynamicContext);
-            return result.getContent();
+            try {
+                ReActResultDTO result = rootNode.apply(requestDTO, dynamicContext);
+                return result.getContent();
+            } finally {
+                ToolExecutionObserverRegistry.unregister(sessionId, executionObserver);
+            }
 
         } catch (Exception e) {
             log.error("ReAct 普通对话异常", e);

@@ -68,6 +68,7 @@ public class ChatModelNode extends AbstractArmorySupport {
                 toolCallbackList.addAll(List.of(toolCallbacks));
             }
         }
+        dynamicContext.setToolCallbacks(List.copyOf(toolCallbackList));
 
         // 构建对话模型
         ChatModel defaultChatModel = OpenAiChatModel.builder()

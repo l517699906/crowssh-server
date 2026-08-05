@@ -2,29 +2,75 @@
   "version": 1,
   "rules": [
     {
+      "id": "user-correction",
+      "role": "user",
+      "type": "USER_CORRECTION",
+      "pattern": "(?:^|[\\s，,。！？；：:])(?:(?:不要|别)(?:再)?(?:执行|继续|修改|改|删除|安装|重启|操作|部署|提交|处理)|先别(?:执行|继续|操作|修改)|不用继续|停止(?:执行|操作|继续|服务)|取消(?:刚才|当前)?(?:操作|任务)|撤销(?:刚才|当前)?(?:操作|任务)|(?:不要|别|停|停止|停下|取消|撤销)(?=$|[\\s，,。！？；：:]))"
+    },
+    {
       "id": "user-task-change",
       "role": "user",
       "type": "TASK_CHANGE",
-      "pattern": "不对|不是这样|改一下|换个思路|换种方式|错了"
+      "pattern": "(?:^|[\\s，,。！？；：:])(?:(?:不对|不是这样|错了)(?=$|[\\s，,。！？；：:])|改(?:一下|成|为)|换(?:个思路|(?:一)?种方式|成)|重新(?:来|做|执行)|其实我想|目标改为|任务改为)"
+    },
+    {
+      "id": "user-correction-clarification",
+      "role": "user",
+      "type": "USER_CORRECTION",
+      "pattern": "(?:^|[\\s，,。！？；：:])(?:(?:你(?:理解|搞)错了|理解错了)(?=$|[\\s，,。！？；：:])|纠正一下|不需要(?:这个|这样))"
+    },
+    {
+      "id": "user-file-switch",
+      "role": "user",
+      "type": "FILE_SWITCH",
+      "pattern": "(?:^|[\\s，,。！？；：:])(?:切换到|切换至|换到|转到)(?:(?:文件|目录|项目|仓库|分支|页面)|\\s*(?:/|~[/\\\\]|[A-Za-z]:[/\\\\]))"
+    },
+    {
+      "id": "user-decision",
+      "role": "user",
+      "type": "DECISION",
+      "pattern": "(?:^|[\\s，,。！？；：:])(?:就用|采用|确认使用|决定(?:采用|使用)?|只做只读检查|先按(?:这个|该|上述)?(?:方案|方式|思路|步骤|计划)|选择(?:使用|方案))"
     },
     {
       "id": "user-task-complete",
       "role": "user",
       "type": "TASK_COMPLETE",
-      "pattern": "完成了|搞定|结束|好了"
+      "pattern": "(?:^|[\\s，,。！？；：:])(?:(?:任务(?:已|已经)?(?:完成|结束)了?|(?:问题|故障)(?:已|已经)?解决了?|已完成|完成了|搞定了?|解决了|到此为止)(?=$|[\\s，,。！？；：:])|(?:结束|可以了|就这样|好了)(?=$|[。！；!;]\\s*$))"
     },
     {
-      "id": "user-correction",
-      "role": "user",
-      "type": "USER_CORRECTION",
-      "pattern": "不要|停|别"
-    },
-    {
-      "id": "tool-error",
+      "id": "tool-timeout",
       "role": "tool",
       "type": "ERROR",
       "caseInsensitive": true,
-      "pattern": "error|failed|exception|permission denied|not found|refused"
+      "pattern": "(?:[\"']?timedOut[\"']?\\s*[:=]\\s*true|(?s)^(?!.*[\"']?success[\"']?\\s*[:=]\\s*true)(?!.*[\"']?status[\"']?\\s*[:=]\\s*[\"']?success[\"']?).*(?:\\b(?:timeout|timed[ -]+out|idle[_ -]timeout)\\b|命令执行超时|执行超时|超时).*$)"
+    },
+    {
+      "id": "tool-nonzero-exit",
+      "role": "tool",
+      "type": "ERROR",
+      "caseInsensitive": true,
+      "pattern": "(?:[\"']?exitCode[\"']?\\s*[:=]\\s*(?!0\\b)-?[1-9]\\d*|\\[\\s*Exit code\\s*:\\s*(?!0\\b)-?[1-9]\\d*\\]|(?:退出码|退出状态)\\s*[:=：]?\\s*(?!0\\b)-?[1-9]\\d*|非零退出)"
+    },
+    {
+      "id": "tool-failure-status",
+      "role": "tool",
+      "type": "ERROR",
+      "caseInsensitive": true,
+      "pattern": "(?:[\"']?success[\"']?\\s*[:=]\\s*false|[\"']?status[\"']?\\s*[:=]\\s*[\"']?(?:error|failed|failure)[\"']?|[\"']?exitCodeKnown[\"']?\\s*[:=]\\s*false|Error executing tool)"
+    },
+    {
+      "id": "tool-error-message-zh",
+      "role": "tool",
+      "type": "ERROR",
+      "caseInsensitive": true,
+      "pattern": "(?s)^(?!.*[\"']?success[\"']?\\s*[:=]\\s*true)(?!.*[\"']?status[\"']?\\s*[:=]\\s*[\"']?success[\"']?).*(?:命令执行异常|(?:执行|命令|操作|连接|请求|认证)(?:失败|异常)|(?:发生|出现)(?:错误|异常)|(?:错误|失败|异常)\\s*[:：]|权限(?:不足|被拒绝)|拒绝访问|连接被拒绝|找不到命令|命令不存在|无法执行|未找到).*$"
+    },
+    {
+      "id": "tool-error-message",
+      "role": "tool",
+      "type": "ERROR",
+      "caseInsensitive": true,
+      "pattern": "(?s)^(?!.*[\"']?success[\"']?\\s*[:=]\\s*true)(?!.*[\"']?status[\"']?\\s*[:=]\\s*[\"']?success[\"']?).*(?:\\b(?:command|request|connection|authentication|operation|execution)\\s+(?:failed|failure)\\b|\\b(?:permission denied|command not found|connection refused|operation not permitted|no such file or directory)\\b|\\b(?:uncaught|unexpected)\\s+exception\\b|(?:^|[\\r\\n])\\s*(?:error|failed)\\s*[:：]).*$"
     }
   ]
 }

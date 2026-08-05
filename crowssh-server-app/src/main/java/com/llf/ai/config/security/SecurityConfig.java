@@ -1,6 +1,7 @@
 package com.llf.ai.config.security;
 
 import com.llf.ai.domain.auth.service.DeviceIdentityService;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -42,6 +43,7 @@ public class SecurityConfig {
                         .accessDeniedHandler((request, response, exception) ->
                                 writeError(response, 403, "ACCESS_DENIED", "无权访问该资源")))
                 .authorizeHttpRequests(authorize -> authorize
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/device/register").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/health").permitAll()

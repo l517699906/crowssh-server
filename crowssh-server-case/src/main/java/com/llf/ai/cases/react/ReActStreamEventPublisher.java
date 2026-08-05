@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llf.ai.api.dto.ReActEventDTO;
 import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionEvent;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -73,7 +73,7 @@ public class ReActStreamEventPublisher {
 
     public void sendExecutionEvent(
             DefaultReActFactory.DynamicContext context,
-            SshExecuteAdkTool.ExecutionEvent executionEvent
+            ToolExecutionEvent executionEvent
     ) throws IOException {
         ReActEventDTO event = new ReActEventDTO();
         event.setEvent("running".equals(executionEvent.getStatus()) ? "tool_call" : "tool_result");
@@ -87,13 +87,22 @@ public class ReActStreamEventPublisher {
             event.setCompletedAt(executionEvent.getCompletedAt());
             event.setDurationMs(executionEvent.getDurationMs());
             event.setOutputLength(executionEvent.getOutputLength());
-            event.setContent("success".equals(executionEvent.getStatus())
-                    ? "命令执行完成，完整输出已保留在终端中。"
-                    : executionEvent.getErrorMessage());
+            event.setContent(executionEventContent(executionEvent));
             event.setErrorMessage(executionEvent.getErrorMessage());
         }
 
         send(context, event);
+    }
+
+    private String executionEventContent(ToolExecutionEvent event) {
+        if ("success".equals(event.getStatus())) {
+            return "executeCommand".equals(event.getToolName())
+                    ? "命令执行完成，完整输出已保留在终端中。"
+                    : "工具执行完成。";
+        }
+        return event.getErrorMessage() == null || event.getErrorMessage().isBlank()
+                ? "工具执行失败。"
+                : event.getErrorMessage();
     }
 
     public void sendRoundEnd(
