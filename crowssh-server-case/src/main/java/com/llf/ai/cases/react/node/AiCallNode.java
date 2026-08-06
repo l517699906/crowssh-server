@@ -7,6 +7,7 @@ import com.llf.ai.api.dto.ChatRequestDTO;
 import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
+import com.llf.ai.cases.react.guard.ToolResultConsistencyGuard;
 import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.IPromptService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
@@ -53,6 +54,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
     @Resource
     private IPromptService promptService;
+
+    @Resource
+    private ToolResultConsistencyGuard toolResultConsistencyGuard;
 
     @Override
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -115,22 +119,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                         event.finalResponse(),
                         eventText.length());
 
-                // 6.1 处理文本内容（模型的响应文本，包括工具调用后的总结）
+                // 6.1 缓冲模型文本，等待本轮工具结果齐备后再做一致性校验和发布。
                 if (!eventText.isBlank()) {
                     textAccumulator.append(eventText);
-                    dynamicContext.setAssistantContent(textAccumulator);
-                    sendTextEvent(dynamicContext, eventText, textAccumulator.toString());
-                }
-
-                // 6.2 记录 assistant 内容到消息历史
-                if (event.content().isPresent()) {
-                    Content content = event.content().get();
-                    String role = content.role().orElse("assistant");
-                    if ("assistant".equals(role)) {
-                        if (!eventText.isBlank()) {
-                            dynamicContext.appendAssistantMessage(eventText);
-                        }
-                    }
                 }
             }
 
@@ -151,6 +142,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         }
 
         roundToolCalls = processCompletedToolEvents(dynamicContext);
+        publishReconciledText(dynamicContext, textAccumulator, hasError);
 
         // 9. 更新步数和工具调用统计
         dynamicContext.incrementStep();
@@ -242,6 +234,31 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 .flatMap(List::stream)
                 .map(part -> part.text().orElse(""))
                 .reduce("", String::concat);
+    }
+
+    private void publishReconciledText(
+            DefaultReActFactory.DynamicContext dynamicContext,
+            StringBuilder textAccumulator,
+            boolean hasError
+    ) throws Exception {
+        String originalText = textAccumulator.toString();
+        String resolvedText = hasError
+                ? originalText
+                : toolResultConsistencyGuard.reconcile(
+                        originalText, dynamicContext.getCurrentToolResults());
+
+        if (!resolvedText.equals(originalText)) {
+            log.warn("模型文本与工具执行事实冲突，已使用服务端工具结果兜底: toolResultCount={}",
+                    dynamicContext.getCurrentToolResults().size());
+        }
+
+        textAccumulator.setLength(0);
+        textAccumulator.append(resolvedText);
+        dynamicContext.setAssistantContent(new StringBuilder(resolvedText));
+        if (!resolvedText.isBlank()) {
+            dynamicContext.appendAssistantMessage(resolvedText);
+            sendTextEvent(dynamicContext, resolvedText, resolvedText);
+        }
     }
 
     private String formatValue(Object value) {

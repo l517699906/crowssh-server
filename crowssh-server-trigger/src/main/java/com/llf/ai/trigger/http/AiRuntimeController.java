@@ -29,14 +29,19 @@ public class AiRuntimeController {
             runtimeChatModelService.test(RuntimeModelConfigMapper.from(requestDTO));
             return Response.<String>builder()
                     .code(ResponseCode.SUCCESS.getCode())
-                    .info("连接正常")
-                    .data("OK")
+                    .info("模型连接及工具结果往返正常")
+                    .data("TOOL_ROUND_TRIP_OK")
                     .build();
         } catch (Exception error) {
             log.warn("客户端 AI 配置连接测试失败: {}", error.getMessage());
+            String failureMessage = error instanceof RuntimeChatModelService.ToolRoundTripException
+                    && error.getMessage() != null
+                    && !error.getMessage().isBlank()
+                    ? error.getMessage()
+                    : "连接或工具结果往返测试失败，请检查服务地址、调用协议、模型和 API Key";
             return Response.<String>builder()
                     .code("AI_CONFIG_ERROR")
-                    .info("连接失败，请检查服务地址、模型和 API Key")
+                    .info(failureMessage)
                     .build();
         } finally {
             if (requestDTO != null) {

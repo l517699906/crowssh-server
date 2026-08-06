@@ -1,11 +1,17 @@
 package com.llf.ai.domain.agent.service.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llf.ai.domain.agent.model.valobj.RuntimeModelConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Service;
 
@@ -21,12 +27,27 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 @Service
 public class RuntimeChatModelService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RuntimeChatModelService.class);
+    static final String CAPABILITY_PROBE_TOOL_NAME = "crowsshCapabilityProbe";
+    private static final String CAPABILITY_PROBE_PROMPT = """
+            This is an end-to-end tool-result round-trip test. Call crowsshCapabilityProbe exactly once
+            with {"value":"ok"}. After the tool returns, reply with exactly the value returned by the tool.
+            Do not call another tool, do not invent the returned value, and do not claim tools are unavailable.
+            """;
+    private static final ToolDefinition CAPABILITY_PROBE_DEFINITION = ToolDefinition.builder()
+            .name(CAPABILITY_PROBE_TOOL_NAME)
+            .description("Checks whether the selected model and protocol preserve a complete tool-result round trip")
+            .inputSchema("""
+                    {"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}
+                    """)
+            .build();
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(12);
     private static final int MAX_MODEL_RESPONSE_BYTES = 1024 * 1024;
@@ -132,11 +153,116 @@ public class RuntimeChatModelService {
     }
 
     public void test(RuntimeModelConfig config) {
-        ChatModel model = build(config, List.of());
+        CapabilityProbe probe = new CapabilityProbe();
+        ChatModel model = build(config, List.of(probe));
         try {
-            model.call("Reply only with OK");
+            verifyToolCalling(model, probe);
         } finally {
             destroy(model);
+        }
+    }
+
+    void verifyToolCalling(ChatModel model) {
+        verifyToolCalling(model, new CapabilityProbe());
+    }
+
+    private void verifyToolCalling(ChatModel model, CapabilityProbe probe) {
+        ToolCallingChatOptions probeOptions = ToolCallingChatOptions.builder()
+                .toolCallbacks(List.of(probe))
+                .internalToolExecutionEnabled(true)
+                .build();
+        ChatResponse response = model.call(new Prompt(CAPABILITY_PROBE_PROMPT, probeOptions));
+
+        if (probe.executionCount() == 0) {
+            throw new ToolRoundTripException(
+                    "模型连接成功，但未执行工具调用；请确认模型支持 Function Calling，"
+                            + "并检查中转站协议是否匹配 OpenAI Chat 或 Anthropic Messages"
+            );
+        }
+        if (probe.executionCount() != 1) {
+            throw new ToolRoundTripException("模型重复执行了工具能力探针，中转站工具调用协议不兼容");
+        }
+        if (!probe.receivedExpectedInput()) {
+            throw new ToolRoundTripException("模型调用了工具，但探针参数不正确，中转站工具参数协议不兼容");
+        }
+        if (!containsText(response, probe.sentinel()) || containsToolCall(response)) {
+            throw new ToolRoundTripException(
+                    "工具已经执行，但模型未正确消费工具结果；当前模型或中转站不支持完整的工具结果回传"
+            );
+        }
+    }
+
+    private boolean containsText(ChatResponse response, String expected) {
+        if (response == null || response.getResults() == null) {
+            return false;
+        }
+        for (Generation generation : response.getResults()) {
+            if (generation == null || generation.getOutput() == null) {
+                continue;
+            }
+            String text = generation.getOutput().getText();
+            if (text != null && text.contains(expected)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsToolCall(ChatResponse response) {
+        if (response == null || response.getResults() == null) {
+            return false;
+        }
+        for (Generation generation : response.getResults()) {
+            if (generation != null
+                    && generation.getOutput() != null
+                    && generation.getOutput().getToolCalls() != null
+                    && !generation.getOutput().getToolCalls().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private final class CapabilityProbe implements ToolCallback {
+
+        private final AtomicInteger executionCount = new AtomicInteger();
+        private final String sentinel = "CROWSSH_TOOL_ROUND_TRIP_"
+                + UUID.randomUUID().toString().replace("-", "");
+        private volatile boolean receivedExpectedInput = true;
+
+        @Override
+        public ToolDefinition getToolDefinition() {
+            return CAPABILITY_PROBE_DEFINITION;
+        }
+
+        @Override
+        public String call(String toolInput) {
+            executionCount.incrementAndGet();
+            receivedExpectedInput = hasExpectedInput(toolInput);
+            return receivedExpectedInput ? sentinel : "CROWSSH_TOOL_PROBE_INVALID_ARGUMENT";
+        }
+
+        private boolean hasExpectedInput(String toolInput) {
+            try {
+                JsonNode input = objectMapper.readTree(toolInput);
+                return input != null
+                        && input.isObject()
+                        && "ok".equals(input.path("value").asText(null));
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+
+        private int executionCount() {
+            return executionCount.get();
+        }
+
+        private boolean receivedExpectedInput() {
+            return receivedExpectedInput;
+        }
+
+        private String sentinel() {
+            return sentinel;
         }
     }
 
@@ -169,6 +295,14 @@ public class RuntimeChatModelService {
     ChatModel build(RuntimeModelConfig config, List<ToolCallback> toolCallbacks) {
         RuntimeModelConnection connection = validateConnection(config);
         validateGeneration(config);
+        LOGGER.info(
+                "构建运行时 AI 模型: provider={}, protocol={}, model={}, host={}, toolCount={}",
+                connection.provider(),
+                connection.protocol(),
+                sanitizeLogValue(config.getModel()),
+                connection.baseUri().getHost(),
+                toolCallbacks.size()
+        );
         return adapter(connection.protocol()).build(connection, config, List.copyOf(toolCallbacks));
     }
 
@@ -419,6 +553,20 @@ public class RuntimeChatModelService {
 
     private String optional(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    private String sanitizeLogValue(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace('\r', '_').replace('\n', '_').replace('\t', '_');
+    }
+
+    public static final class ToolRoundTripException extends IllegalArgumentException {
+
+        public ToolRoundTripException(String message) {
+            super(message);
+        }
     }
 
     private record ProviderPolicy(String protocol,

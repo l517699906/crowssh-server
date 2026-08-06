@@ -11,6 +11,9 @@ import java.util.List;
 
 interface RuntimeModelProtocolAdapter {
 
+    /** ADK 1.2.0 不会把 functionResponse 转为 Spring AI ToolResponseMessage。 */
+    boolean INTERNAL_TOOL_EXECUTION_ENABLED = true;
+
     String protocol();
 
     ChatModel build(RuntimeModelConnection connection,

@@ -35,7 +35,8 @@ final class GeminiNativeProtocolAdapter implements RuntimeModelProtocolAdapter {
                 .build();
 
         GoogleGenAiChatOptions.Builder options = GoogleGenAiChatOptions.builder()
-                .model(config.getModel().trim());
+                .model(config.getModel().trim())
+                .internalToolExecutionEnabled(INTERNAL_TOOL_EXECUTION_ENABLED);
         if (!Boolean.TRUE.equals(config.getOmitTemperature()) && config.getTemperature() != null) {
             options.temperature(config.getTemperature());
         }

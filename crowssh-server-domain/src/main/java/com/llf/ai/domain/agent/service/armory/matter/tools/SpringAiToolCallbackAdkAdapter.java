@@ -56,6 +56,8 @@ public final class SpringAiToolCallbackAdkAdapter extends BaseTool {
                 agentSessionId,
                 ToolExecutionEvent.running(toolCallId, name(), safeArgs, startedAt)
         );
+        log.info("工具执行开始: tool={}, callId={}, argKeys={}",
+                name(), toolCallId, safeArgs.keySet());
 
         Map<String, Object> result;
         String status;
@@ -77,6 +79,7 @@ public final class SpringAiToolCallbackAdkAdapter extends BaseTool {
             outputLength = 0;
         }
 
+        long finishedAt = System.currentTimeMillis();
         ToolExecutionObserverRegistry.publish(
                 agentSessionId,
                 ToolExecutionEvent.completed(
@@ -86,11 +89,13 @@ public final class SpringAiToolCallbackAdkAdapter extends BaseTool {
                         result,
                         status,
                         startedAt,
-                        System.currentTimeMillis(),
+                        finishedAt,
                         outputLength,
                         errorMessage
                 )
         );
+        log.info("工具执行完成: tool={}, callId={}, status={}, durationMs={}, outputLength={}",
+                name(), toolCallId, status, finishedAt - startedAt, outputLength);
         return result;
     }
 

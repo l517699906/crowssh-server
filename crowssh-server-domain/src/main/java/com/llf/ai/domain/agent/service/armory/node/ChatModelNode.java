@@ -76,6 +76,8 @@ public class ChatModelNode extends AbstractArmorySupport {
                 .defaultOptions(OpenAiChatOptions.builder()
                         .model(chatModelConfig.getModel())
                         .toolCallbacks(toolCallbackList)
+                        // ADK 1.2.0 会丢弃 functionResponse，暂由 Spring AI 完成工具回传循环。
+                        .internalToolExecutionEnabled(true)
                         .build())
                 .build();
 

@@ -36,12 +36,40 @@ record RuntimeModelConnection(String provider,
         return resolveEndpoint(baseUri, relativePath);
     }
 
+    URI versionedEndpoint(String version, String relativePath) {
+        String path = normalizeRelativePath(relativePath);
+        String normalizedVersion = normalizeRelativePath(version);
+        String versionPrefix = normalizedVersion + "/";
+        String baseUrl = baseUrl();
+        String versionSuffix = "/" + normalizedVersion;
+        boolean pathIncludesVersion = path.equalsIgnoreCase(normalizedVersion)
+                || path.regionMatches(true, 0, versionPrefix, 0, versionPrefix.length());
+        boolean baseIncludesVersion = baseUrl.length() >= versionSuffix.length()
+                && baseUrl.regionMatches(
+                true,
+                baseUrl.length() - versionSuffix.length(),
+                versionSuffix,
+                0,
+                versionSuffix.length()
+        );
+        URI endpointBase = baseUri;
+        if (pathIncludesVersion && baseIncludesVersion) {
+            endpointBase = URI.create(baseUrl.substring(0, baseUrl.length() - versionSuffix.length()));
+        }
+        return resolveEndpoint(endpointBase, path);
+    }
+
     static URI resolveEndpoint(URI baseUri, String relativePath) {
+        String path = normalizeRelativePath(relativePath);
+        return URI.create(stripTrailingSlash(baseUri.toString()) + "/" + path);
+    }
+
+    private static String normalizeRelativePath(String relativePath) {
         String path = relativePath == null ? "" : relativePath.trim().replaceFirst("^/+", "");
         if (path.isEmpty() || path.contains("..") || path.contains("?") || path.contains("#")) {
             throw new IllegalArgumentException("接口路径必须是有效的相对路径");
         }
-        return URI.create(stripTrailingSlash(baseUri.toString()) + "/" + path);
+        return path;
     }
 
     private static String stripTrailingSlash(String value) {

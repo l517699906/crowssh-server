@@ -38,7 +38,8 @@ final class OpenAiChatProtocolAdapter implements RuntimeModelProtocolAdapter {
                 .build();
 
         OpenAiChatOptions.Builder options = OpenAiChatOptions.builder()
-                .model(config.getModel().trim());
+                .model(config.getModel().trim())
+                .internalToolExecutionEnabled(INTERNAL_TOOL_EXECUTION_ENABLED);
         if (!Boolean.TRUE.equals(config.getOmitTemperature()) && config.getTemperature() != null) {
             options.temperature(config.getTemperature());
         }
