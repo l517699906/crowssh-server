@@ -55,10 +55,10 @@ public class DynamicPromptBuilder {
      * 适用于无法直接修改 system instruction 的场景——ADK Runner 的 system instruction
      * 在 Agent 装配阶段就固定了，运行期改不了，因此把动态上下文拼在用户消息前面。
      * <p>
-     * 三类上下文"有才拼、没有不拼"：第一轮对话无历史时返回空串，不塞空标题浪费 token。
+     * 各类上下文"有才拼、没有不拼"：第一轮对话无历史时返回空串，不塞空标题浪费 token。
      *
      * @param ctx 动态上下文，为 null 时返回空串
-     *化消息前缀文本，无内容时返回空串
+     * @return 结构化消息前缀文本，无内容时返回空串
      */
     public String buildMessagePrefix(PromptContextVO ctx) {
         if (ctx == null) return "";
@@ -67,12 +67,20 @@ public class DynamicPromptBuilder {
         boolean hasContent = false;
 
         if (!isEmpty(ctx.getServerInfo()) || !isEmpty(ctx.getOsInfo())
-                || !isEmpty(ctx.getCurrentUser()) || !isEmpty(ctx.getCurrentDirectory())) {
+                || !isEmpty(ctx.getCurrentUser()) || !isEmpty(ctx.getCurrentDirectory())
+                || !isEmpty(ctx.getUptime())) {
             sb.append("[系统环境]\n");
             if (!isEmpty(ctx.getServerInfo()))       sb.append("服务器: ").append(ctx.getServerInfo()).append("\n");
             if (!isEmpty(ctx.getOsInfo()))           sb.append("系统: ").append(ctx.getOsInfo()).append("\n");
             if (!isEmpty(ctx.getCurrentUser()))      sb.append("用户: ").append(ctx.getCurrentUser()).append("\n");
             if (!isEmpty(ctx.getCurrentDirectory())) sb.append("目录: ").append(ctx.getCurrentDirectory()).append("\n");
+            if (!isEmpty(ctx.getUptime()))           sb.append("运行时长: ").append(ctx.getUptime()).append("\n");
+            hasContent = true;
+        }
+
+        if (!isEmpty(ctx.getTaskDescription())) {
+            sb.append("\n[当前任务]\n")
+                    .append(ctx.getTaskDescription()).append("\n");
             hasContent = true;
         }
 
@@ -92,6 +100,12 @@ public class DynamicPromptBuilder {
             hasContent = true;
         }
 
+        if (!isEmpty(ctx.getToolResultSummary())) {
+            sb.append("\n[工具执行摘要]\n")
+                    .append(ctx.getToolResultSummary()).append("\n");
+            hasContent = true;
+        }
+
         if (!hasContent) return "";
 
         String prefix = sb.toString();
@@ -102,14 +116,15 @@ public class DynamicPromptBuilder {
     /**
      * 将环境信息以 Markdown 格式追加到 StringBuilder 中。
      * <p>
-     * 服务器、操作系统、当前用户、工作目录四个字段全为空时跳过，不输出空标题。
+     * 服务器、操作系统、当前用户、工作目录和运行时长全为空时跳过，不输出空标题。
      *
      * @param sb  目标 StringBuilder
      * @param ctx 动态上下文
      */
     private void appendEnvironmentInfo(StringBuilder sb, PromptContextVO ctx) {
         if (isEmpty(ctx.getServerInfo()) && isEmpty(ctx.getOsInfo())
-                && isEmpty(ctx.getCurrentUser()) && isEmpty(ctx.getCurrentDirectory())) {
+                && isEmpty(ctx.getCurrentUser()) && isEmpty(ctx.getCurrentDirectory())
+                && isEmpty(ctx.getUptime())) {
             return;
         }
         sb.append("\n\n## 当前环境信息\n");
@@ -117,6 +132,7 @@ public class DynamicPromptBuilder {
         if (!isEmpty(ctx.getOsInfo()))           sb.append("- 操作系统: ").append(ctx.getOsInfo()).append("\n");
         if (!isEmpty(ctx.getCurrentUser()))      sb.append("- 当前用户: ").append(ctx.getCurrentUser()).append("\n");
         if (!isEmpty(ctx.getCurrentDirectory())) sb.append("- 工作目录: ").append(ctx.getCurrentDirectory()).append("\n");
+        if (!isEmpty(ctx.getUptime()))           sb.append("- 运行时长: ").append(ctx.getUptime()).append("\n");
     }
 
     /**

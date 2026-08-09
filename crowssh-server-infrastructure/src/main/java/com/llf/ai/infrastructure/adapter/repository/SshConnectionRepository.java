@@ -26,7 +26,7 @@ public class SshConnectionRepository implements ISshConnectionRepository {
 
     private final ISshConnectionDAO sshConnectionDAO;
     private final ISshConnectionConfigDAO sshConnectionConfigDAO;
-    private final PasswordEncryptor passwordEncryptor = new PasswordEncryptor();
+    private final PasswordEncryptor passwordEncryptor;
 
     @Override
     public void saveConnection(SshConnectionEntity entity) {

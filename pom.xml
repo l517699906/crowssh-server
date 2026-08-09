@@ -22,6 +22,8 @@
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <crowssh.test.groups></crowssh.test.groups>
+    <crowssh.test.excluded-groups>com.llf.ai.test.support.IntegrationTest</crowssh.test.excluded-groups>
   </properties>
   <developers>
     <developer>
@@ -283,8 +285,15 @@
     <profile>
       <id>prod</id>
       <properties>
-        <java_jvm>-Xms6G -Xmx6G -server  -XX:MaxPermSize=256M -Xss256K -Dspring.profiles.active=release -XX:+DisableExplicitGC -XX:+UseG1GC  -XX:LargePageSizeInBytes=128m -XX:+UseFastAccessorMethods -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/export/Logs/fq-mall-activity-app -Xloggc:/export/Logs/ai-agent-scaffold-boot/gc-ai-agent-scaffold-boot.log -XX:+PrintGCDetails -XX:+PrintGCDateStamps</java_jvm>
+        <java_jvm>-Xms6G -Xmx6G -server  -XX:MaxPermSize=256M -Xss256K -Dspring.profiles.active=prod -XX:+DisableExplicitGC -XX:+UseG1GC  -XX:LargePageSizeInBytes=128m -XX:+UseFastAccessorMethods -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/export/Logs/fq-mall-activity-app -Xloggc:/export/Logs/ai-agent-scaffold-boot/gc-ai-agent-scaffold-boot.log -XX:+PrintGCDetails -XX:+PrintGCDateStamps</java_jvm>
         <profileActive>prod</profileActive>
+      </properties>
+    </profile>
+    <profile>
+      <id>integration-tests</id>
+      <properties>
+        <crowssh.test.groups>com.llf.ai.test.support.IntegrationTest</crowssh.test.groups>
+        <crowssh.test.excluded-groups></crowssh.test.excluded-groups>
       </properties>
     </profile>
   </profiles>

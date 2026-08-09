@@ -30,6 +30,7 @@ public class ReActEventDTO {
     /**
      * 事件类型
      * - text: 文本片断
+     * - tool_approval_required: 工具调用等待用户审批
      * - tool_call: 工具调用开始
      * - tool_result: 工具执行结果
      * - round_end: 一轮结束
@@ -58,10 +59,11 @@ public class ReActEventDTO {
 
     /**
      * 工具调用状态（tool_call / tool_result 时）
-     * - pending: 等待执行
+     * - approval_required: 等待用户审批
      * - running: 执行中
      * - success: 执行成功
      * - error: 执行失败
+     * - denied / expired / cancelled: 未执行终态
      */
     private String status;
 
@@ -84,6 +86,15 @@ public class ReActEventDTO {
 
     /** 工具执行错误 */
     private String errorMessage;
+
+    /** 一次性命令审批 ID */
+    private String approvalId;
+
+    /** 审批过期时间戳 */
+    private Long expiresAt;
+
+    /** 命令风险级别 */
+    private String riskLevel;
 
     /** ReAct 终止原因 */
     private String stopReason;

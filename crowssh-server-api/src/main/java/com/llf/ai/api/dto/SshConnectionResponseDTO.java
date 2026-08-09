@@ -60,4 +60,7 @@ public class SshConnectionResponseDTO {
 
     /** 严格主机密钥检查 */
     private Boolean strictHostKeyCheck;
+
+    /** 用户确认过的 SHA-256 主机密钥指纹 */
+    private String hostKeyFingerprint;
 }

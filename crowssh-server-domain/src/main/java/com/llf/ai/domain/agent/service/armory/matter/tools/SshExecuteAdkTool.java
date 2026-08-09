@@ -8,7 +8,6 @@ import com.llf.ai.domain.ssh.service.ISshTerminalService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -30,8 +29,16 @@ public class SshExecuteAdkTool {
     public static final String CONNECTION_ID_STATE_KEY = "crowssh:connectionId";
     public static final String OWNER_ID_STATE_KEY = "crowssh:ownerId";
 
-    @Resource
-    private ISshTerminalService sshTerminalService;
+    private final ISshTerminalService sshTerminalService;
+    private final CommandApprovalService commandApprovalService;
+
+    public SshExecuteAdkTool(
+            ISshTerminalService sshTerminalService,
+            CommandApprovalService commandApprovalService
+    ) {
+        this.sshTerminalService = sshTerminalService;
+        this.commandApprovalService = commandApprovalService;
+    }
 
     // google-adk-spring-ai 1.2.0 转换工具时不会传递 ToolContext，因此由请求线程显式绑定执行资源。
     private static final ThreadLocal<ExecutionBinding> currentExecutionBinding = new ThreadLocal<>();
@@ -150,69 +157,122 @@ public class SshExecuteAdkTool {
 
         String toolCallId = "call_" + UUID.randomUUID();
         long startedAt = System.currentTimeMillis();
+        String safeCommand = command == null ? "" : command;
+        String commandHash = CommandApprovalService.commandHash(safeCommand);
+        Map<String, Object> arguments = Map.of("command", safeCommand);
 
-        log.info("[executeCommand] sessionId={}, terminalSessionId={}, connectionId={}, command={}",
-                agentSessionId, terminalSessionId, connectionId, command);
-
-        Map<String, Object> arguments = Map.of("command", command == null ? "" : command);
-        ToolExecutionObserverRegistry.publish(
-                agentSessionId,
-                ToolExecutionEvent.running(
-                        toolCallId, "executeCommand", arguments, startedAt)
-        );
+        log.info("[executeCommand] request sessionId={} terminalSessionId={} connectionId={} commandHash={} commandLength={}",
+                agentSessionId, terminalSessionId, connectionId, commandHash, safeCommand.length());
 
         if (ownerId == null || ownerId.isBlank()) {
             log.warn("[executeCommand] 设备身份为空，拒绝执行命令");
-            return failureResult(toolCallId, agentSessionId, command, startedAt,
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
                     "AI 请求缺少可信设备身份，无法执行 SSH 命令。");
         }
 
         if (terminalSessionId == null || terminalSessionId.isEmpty()) {
             log.warn("[executeCommand] 终端会话ID为空，无法执行命令");
-            return failureResult(toolCallId, agentSessionId, command, startedAt,
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
                     "未绑定 SSH 终端会话。请先打开 SSH 终端连接。");
+        }
+        if (safeCommand.isBlank()) {
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
+                    "命令不能为空。");
         }
 
         TerminalSessionEntity terminalSession = sshTerminalService.getTerminalSession(
                 ownerId, terminalSessionId);
         if (terminalSession == null || !terminalSession.isActive()) {
             log.warn("[executeCommand] 终端会话不存在: {}", terminalSessionId);
-            return failureResult(toolCallId, agentSessionId, command, startedAt,
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
                     "SSH 终端会话不存在或已关闭: " + terminalSessionId);
         }
         if (connectionId == null || connectionId.isBlank()
                 || !connectionId.equals(terminalSession.getConnectionId())) {
             log.warn("[executeCommand] 终端归属校验失败: terminalSessionId={}, expectedConnectionId={}, actualConnectionId={}",
                     terminalSessionId, connectionId, terminalSession.getConnectionId());
-            return failureResult(toolCallId, agentSessionId, command, startedAt,
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
                     "AI 对话绑定的服务器与当前 SSH 终端不一致");
         }
 
-        if (DANGEROUS_PATTERN.matcher(command).find()) {
-            log.warn("[executeCommand] 危险命令被拦截: sessionId={}, terminalSessionId={}, command={}",
-                    agentSessionId, terminalSessionId, command);
-            return failureResult(toolCallId, agentSessionId, command, startedAt,
-                    "⚠️ 危险命令被拦截: " + command
-                            + "\n该命令可能导致系统损坏或数据丢失。如确需执行，请手动在终端操作。");
+        if (DANGEROUS_PATTERN.matcher(safeCommand).find()) {
+            log.warn("[executeCommand] 危险命令被硬性拦截 sessionId={} terminalSessionId={} commandHash={} commandLength={}",
+                    agentSessionId, terminalSessionId, commandHash, safeCommand.length());
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
+                    "危险命令被硬性拦截。该命令可能导致系统损坏或数据丢失；如确需执行，请手动在终端操作。");
         }
 
+        if (!ToolExecutionObserverRegistry.hasObserver(agentSessionId)) {
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
+                    "当前请求不支持交互审批，AI SSH 命令未执行。");
+        }
+
+        CommandApprovalService.ApprovalTicket approvalTicket = null;
         try {
-            log.info("SSH 执行命令: session={}, command={}", terminalSessionId, command);
+            approvalTicket = commandApprovalService.request(
+                    ownerId,
+                    agentSessionId,
+                    terminalSessionId,
+                    connectionId,
+                    toolCallId,
+                    safeCommand);
+            ToolExecutionObserverRegistry.publish(
+                    agentSessionId,
+                    ToolExecutionEvent.approvalRequired(
+                            toolCallId,
+                            "executeCommand",
+                            arguments,
+                            startedAt,
+                            approvalTicket.approvalId(),
+                            approvalTicket.expiresAt(),
+                            approvalTicket.riskLevel()));
+
+            CommandApprovalService.Decision decision =
+                    commandApprovalService.awaitDecision(approvalTicket);
+            if (decision != CommandApprovalService.Decision.APPROVED) {
+                String status = decision.name().toLowerCase();
+                String message = switch (decision) {
+                    case DENIED -> "用户已拒绝执行该命令。";
+                    case EXPIRED -> "命令审批已过期，未执行。";
+                    case CANCELLED -> "命令执行已取消。";
+                    default -> "命令未获批准，未执行。";
+                };
+                commandApprovalService.recordExecutionResult(
+                        approvalTicket, status, null, false, 0);
+                return failureResult(
+                        toolCallId, agentSessionId, safeCommand, startedAt, status, message);
+            }
+
+            ToolExecutionObserverRegistry.publish(
+                    agentSessionId,
+                    ToolExecutionEvent.running(
+                            toolCallId, "executeCommand", arguments, startedAt));
+            log.info("SSH 执行已批准 sessionId={} commandHash={} commandLength={}",
+                    terminalSessionId, commandHash, safeCommand.length());
 
             // AI 命令通过隔离执行协议返回真实退出码，避免仅凭输出文本猜测成功与否。
             CommandExecutionResult execution = sshTerminalService.executeCommandWithResult(
-                    ownerId, terminalSessionId, command);
+                    ownerId, terminalSessionId, safeCommand);
             String output = execution.output();
 
-            log.info("SSH 命令执行完成: outputLength={}, exitCode={}, timedOut={}, exitCodeKnown={}, output={}",
-                    output.length(), execution.exitCode(), execution.timedOut(), execution.exitCodeKnown(),
-                    output.length() > 300 ? output.substring(0, 300) + "..." : output);
+            if (commandApprovalService.isCancelled(approvalTicket)
+                    || Thread.currentThread().isInterrupted()) {
+                commandApprovalService.recordExecutionResult(
+                        approvalTicket, "cancelled", null, false, output.length());
+                return failureResult(
+                        toolCallId, agentSessionId, safeCommand, startedAt, "cancelled",
+                        "命令执行已取消。");
+            }
+
+            log.info("SSH 命令执行完成: commandHash={} outputLength={} exitCode={} timedOut={} exitCodeKnown={}",
+                    commandHash, output.length(), execution.exitCode(), execution.timedOut(),
+                    execution.exitCodeKnown());
 
             // 只有 SSH exec channel 明确返回 0 才能判定成功，未知退出码不能冒充成功。
             boolean success = execution.isSuccess();
 
             Map<String, Object> result = new HashMap<>();
-            result.put("command", command);
+            result.put("command", safeCommand);
             result.put("output", output);
             result.put("success", success);
             result.put("exitCode", execution.exitCode());
@@ -246,13 +306,33 @@ public class SshExecuteAdkTool {
                             suggestion
                     )
             );
+            commandApprovalService.recordExecutionResult(
+                    approvalTicket,
+                    success ? "success" : "error",
+                    execution.exitCode(),
+                    execution.exitCodeKnown(),
+                    output.length());
 
             return result;
 
         } catch (Exception e) {
-            log.error("SSH 命令执行异常: session={}, command={}", terminalSessionId, command, e);
-            return failureResult(toolCallId, agentSessionId, command, startedAt,
-                    "命令执行异常: " + e.getMessage());
+            boolean cancelled = approvalTicket != null
+                    && (commandApprovalService.isCancelled(approvalTicket)
+                    || Thread.currentThread().isInterrupted());
+            String status = cancelled ? "cancelled" : "error";
+            log.error("SSH 命令执行异常 session={} commandHash={} commandLength={} status={} exceptionType={}",
+                    terminalSessionId, commandHash, safeCommand.length(), status,
+                    e.getClass().getSimpleName());
+            if (approvalTicket != null) {
+                commandApprovalService.recordExecutionResult(
+                        approvalTicket, status, null, false, 0);
+            }
+            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, status,
+                    cancelled ? "命令执行已取消。" : "命令执行异常，请检查 SSH 连接后重试。");
+        } finally {
+            if (approvalTicket != null) {
+                commandApprovalService.complete(approvalTicket);
+            }
         }
 
     }
@@ -262,6 +342,7 @@ public class SshExecuteAdkTool {
             String agentSessionId,
             String command,
             long startedAt,
+            String status,
             String message) {
         long completedAt = System.currentTimeMillis();
         Map<String, Object> result = Map.of(
@@ -276,7 +357,7 @@ public class SshExecuteAdkTool {
                         "executeCommand",
                         Map.of("command", command == null ? "" : command),
                         result,
-                        "error",
+                        status,
                         startedAt,
                         completedAt,
                         0,

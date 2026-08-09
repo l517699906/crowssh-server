@@ -100,8 +100,8 @@ public class MilestoneTracker {
                     .content(truncate(content, 200))
                     .timestamp(System.currentTimeMillis())
                     .build());
-            log.info("里程碑记录: sessionId={}, ruleId={}, type={}, content={}",
-                    sessionId, rule.id(), rule.type(), truncate(content, 100));
+            log.info("里程碑记录: sessionId={}, ruleId={}, type={}, contentLength={}",
+                    sessionId, rule.id(), rule.type(), content.length());
             return;
         }
     }

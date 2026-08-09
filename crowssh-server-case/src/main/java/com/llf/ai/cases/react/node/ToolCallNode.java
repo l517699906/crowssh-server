@@ -5,6 +5,8 @@ import com.llf.ai.api.dto.ChatRequestDTO;
 import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
+import com.llf.ai.domain.agent.service.IChatContextService;
+import com.llf.ai.domain.agent.service.IPromptService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -49,8 +51,16 @@ import java.util.Map;
 @Component("reactToolCallNode")
 public class ToolCallNode extends AbstractAIAgentReActSupport {
 
+    private static final String TOOL_EXECUTION_FAILURE_MESSAGE = "工具执行失败，请稍后重试。";
+
     @Resource
     private SshExecuteAdkTool sshExecuteAdkTool;
+
+    @Resource
+    private IPromptService promptService;
+
+    @Resource
+    private IChatContextService chatContextService;
 
     @Override
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -167,7 +177,8 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
             String argsStr = (String) toolCall.get("args");
 
             if (toolCallId == null || toolName == null) {
-                log.warn("工具调用信息不完整: {}", toolCall);
+                log.warn("工具调用信息不完整: idPresent={}, namePresent={}, fieldCount={}",
+                        toolCallId != null, toolName != null, toolCall.size());
                 continue;
             }
 
@@ -181,8 +192,9 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
                 resultContent = executeTool(toolName, argsStr);
                 log.info("工具执行成功: name={}, result_length={}", toolName, resultContent.length());
             } catch (Exception e) {
-                log.error("工具执行失败: name={}", toolName, e);
-                resultContent = "Error executing tool '" + toolName + "': " + e.getMessage();
+                log.error("工具执行失败: name={}, errorType={}",
+                        toolName, e.getClass().getName());
+                resultContent = TOOL_EXECUTION_FAILURE_MESSAGE;
                 status = "error";
             }
 
@@ -200,6 +212,10 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
             // 追加 tool 消息到消息历史（供下一轮 AI 调用使用）
             dynamicContext.appendToolMessage(toolCallId, resultContent);
 
+            // 记录里程碑和工具执行摘要（供下一轮 Prompt 注入）
+            promptService.detectAndRecordMilestone(dynamicContext.getSessionId(), "tool", resultContent);
+            chatContextService.pushToolResult(dynamicContext.getSessionId(), toolName, resultContent);
+
             // 发送 tool_result SSE 事件
             sendToolResultEvent(dynamicContext, toolCallId, resultContent, status);
         }
@@ -213,7 +229,8 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
      * 根据工具名称和参数执行对应的工具
      */
     private String executeTool(String toolName, String argsStr) throws Exception {
-        log.info("手动执行工具: name={}, args={}", toolName, argsStr);
+        log.info("手动执行工具: name={}, argumentLength={}",
+                toolName, argsStr == null ? 0 : argsStr.length());
 
         switch (toolName) {
             case "executeCommand":
@@ -290,7 +307,7 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
             Object value = args.get(key);
             return value != null ? value.toString() : null;
         } catch (Exception e) {
-            log.warn("解析工具参数失败: {}", e.getMessage());
+            log.warn("解析工具参数失败: errorType={}", e.getClass().getName());
             // 兜底：简单字符串匹配
             String pattern = "\"" + key + "\"";
             int idx = argsStr.indexOf(pattern);

@@ -31,6 +31,17 @@ public class DeviceIdentityService {
     }
 
     public DeviceRegistration register() {
+        return register(Integer.MAX_VALUE);
+    }
+
+    public synchronized DeviceRegistration register(int maxActivePrincipals) {
+        if (maxActivePrincipals <= 0) {
+            throw new IllegalArgumentException("设备身份配额必须大于 0");
+        }
+        if (repository.countActive() >= maxActivePrincipals) {
+            throw new DeviceRegistrationQuotaExceededException(maxActivePrincipals);
+        }
+
         String principalId = UUID.randomUUID().toString().replace("-", "");
         byte[] tokenBytes = new byte[TOKEN_BYTES];
         secureRandom.nextBytes(tokenBytes);

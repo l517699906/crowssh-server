@@ -12,4 +12,6 @@ public interface IDevicePrincipalRepository {
     void save(DevicePrincipalEntity entity);
 
     Optional<DevicePrincipalEntity> queryActiveByTokenHash(String tokenHash);
+
+    long countActive();
 }

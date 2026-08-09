@@ -441,20 +441,20 @@
 
       <div class="hero-copy">
         <h2>为智能对话，准备一个干净的入口。</h2>
-        <p>左侧展示产品信息与 AI 效果图，右侧保留简洁登录区。默认账号是 <strong>admin / admin</strong>，适合本地演示和 Nginx 静态页联调。</p>
+        <p>演示页通过服务端签发的设备身份访问接口，不包含默认账号或前端硬编码口令。</p>
 
         <div class="feature-list">
           <div class="feature">
-            <strong>统一登录态</strong>
-            <span>登录成功后写入 cookie，后续页面可直接读取。</span>
+            <strong>服务端身份</strong>
+            <span>身份和访问令牌由 CrowSSH 服务端生成并校验。</span>
           </div>
           <div class="feature">
-            <strong>轻量演示</strong>
-            <span>无需额外框架，打开静态页即可体验完整流程。</span>
+            <strong>会话级存储</strong>
+            <span>访问令牌只保存在当前浏览器标签页的会话存储中。</span>
           </div>
           <div class="feature">
-            <strong>后续扩展</strong>
-            <span>可直接衔接对话页与后端 API 配置。</span>
+            <strong>注册门禁</strong>
+            <span>服务端统一执行注册码、频率与身份总量限制。</span>
           </div>
         </div>
       </div>
@@ -466,39 +466,27 @@
 
     <section class="auth" aria-label="登录信息">
       <div class="auth-card">
-        <div class="eyebrow">Login Portal</div>
-        <h2>欢迎回来</h2>
-        <p>请输入你的账号密码。默认演示账号为 <strong>admin</strong>，密码也是 <strong>admin</strong>。</p>
+        <div class="eyebrow">Device Identity</div>
+        <h2>创建设备身份</h2>
+        <p>向 CrowSSH 服务端注册当前演示会话。受控部署启用注册码时，请在下方填写。</p>
 
-        <div class="demo-row" aria-label="默认凭据">
-          <span class="demo-chip">账号：admin</span>
-          <span class="demo-chip">密码：admin</span>
+        <div class="demo-row" aria-label="安全说明">
+          <span class="demo-chip">无默认口令</span>
+          <span class="demo-chip">关闭标签页即清除令牌</span>
         </div>
 
         <form id="loginForm" novalidate>
           <div class="field">
-            <label for="username">账号</label>
-            <input class="input" id="username" name="username" type="text" placeholder="请输入账号" autocomplete="username" value="admin">
-          </div>
-          <div class="field">
-            <label for="password">密码</label>
-            <input class="input" id="password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" value="admin">
+            <label for="inviteCode">注册码</label>
+            <input class="input" id="inviteCode" name="inviteCode" type="password" placeholder="未启用注册码时留空" autocomplete="off">
           </div>
 
-          <div class="meta-row">
-            <label class="remember">
-              <input id="remember" type="checkbox" checked>
-              记住登录状态
-            </label>
-        <button class="link" type="button" id="resetDemo" style="background:none;border:0;padding:0;font:inherit;cursor:pointer;">恢复默认</button>
-          </div>
-
-          <button class="submit" type="submit">登录进入</button>
+          <button class="submit" type="submit">注册并进入</button>
           <div class="error" id="errorText" aria-live="polite"></div>
         </form>
 
         <div class="footer-note">
-          登录成功后会保存 <code>ai_agent_login</code> cookie，并跳转到 <code>index.html</code>。
+          注册成功后只在 <code>sessionStorage</code> 保存设备令牌，并跳转到 <code>index.html</code>。
         </div>
       </div>
     </section>
@@ -509,11 +497,9 @@
   <script>
     (function () {
       const loginForm = document.getElementById('loginForm');
-      const usernameInput = document.getElementById('username');
-      const passwordInput = document.getElementById('password');
-      const rememberInput = document.getElementById('remember');
+      const inviteCodeInput = document.getElementById('inviteCode');
+      const submitButton = loginForm.querySelector('button[type="submit"]');
       const errorText = document.getElementById('errorText');
-      const resetDemo = document.getElementById('resetDemo');
 
       function redirectIfLoggedIn() {
         if (window.AIAuth && window.AIAuth.getLoginState()) {
@@ -529,49 +515,55 @@
         errorText.textContent = '';
       }
 
-      function normalize(value) {
-        return String(value || '').trim();
+      function joinUrl(base, path) {
+        return `${String(base || '').replace(/\/$/, '')}${path}`;
       }
 
-      resetDemo.addEventListener('click', function (event) {
+      async function registerDevice(inviteCode) {
+        const config = window.APP_CONFIG || {};
+        const path = config.API_PATHS && config.API_PATHS.registerDevice;
+        if (!path) {
+          throw new Error('设备注册接口未配置。');
+        }
+        const headers = { Accept: 'application/json' };
+        if (inviteCode) {
+          headers['X-CrowSSH-Registration-Code'] = inviteCode;
+        }
+        const response = await fetch(joinUrl(config.API_BASE, path), {
+          method: 'POST',
+          headers,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || !payload.data) {
+          throw new Error((payload && payload.info) || `设备注册失败：${response.status}`);
+        }
+        if (!payload.data.principalId || !payload.data.accessToken) {
+          throw new Error('设备注册响应缺少身份信息。');
+        }
+        return payload.data;
+      }
+
+      loginForm.addEventListener('submit', async function (event) {
         event.preventDefault();
-        usernameInput.value = 'admin';
-        passwordInput.value = 'admin';
         clearError();
-        usernameInput.focus();
+        submitButton.disabled = true;
+        submitButton.textContent = '注册中...';
+        try {
+          const identity = await registerDevice(String(inviteCodeInput.value || '').trim());
+          if (!window.AIAuth) {
+            throw new Error('设备身份存储模块未加载。');
+          }
+          window.AIAuth.saveLoginState(identity);
+          window.location.href = './index.html';
+        } catch (error) {
+          showError(error.message || '设备注册失败。');
+        } finally {
+          submitButton.disabled = false;
+          submitButton.textContent = '注册并进入';
+        }
       });
 
-      loginForm.addEventListener('submit', function (event) {
-        event.preventDefault();
-        const username = normalize(usernameInput.value);
-        const password = normalize(passwordInput.value);
-
-        if (!username || !password) {
-          showError('请输入账号和密码。');
-          return;
-        }
-
-        if (username !== 'admin' || password !== 'admin') {
-          showError('账号或密码不正确，默认演示账号是 admin / admin。');
-          return;
-        }
-
-        if (window.AIAuth) {
-          window.AIAuth.saveLoginState(username);
-        }
-
-        if (!rememberInput.checked) {
-          const expires = new Date(Date.now() + 30 * 1000).toUTCString();
-          document.cookie = `ai_agent_login=${encodeURIComponent(JSON.stringify({ user: username, ts: Date.now() }))}; expires=${expires}; path=/; SameSite=Lax`;
-        }
-
-        clearError();
-        window.location.href = './index.html';
-      });
-
-      [usernameInput, passwordInput].forEach(function (input) {
-        input.addEventListener('input', clearError);
-      });
+      inviteCodeInput.addEventListener('input', clearError);
 
       redirectIfLoggedIn();
     })();

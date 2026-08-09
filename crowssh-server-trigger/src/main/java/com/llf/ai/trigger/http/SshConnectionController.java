@@ -2,7 +2,10 @@ package com.llf.ai.trigger.http;
 
 import com.llf.ai.api.dto.SshConnectionRequestDTO;
 import com.llf.ai.api.dto.SshConnectionResponseDTO;
+import com.llf.ai.api.dto.SshHostKeyStatusDTO;
 import com.llf.ai.api.response.Response;
+import com.llf.ai.domain.ssh.adapter.port.HostKeyVerificationException;
+import com.llf.ai.domain.ssh.adapter.port.SshTargetBlockedException;
 import com.llf.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.llf.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.llf.ai.domain.ssh.model.valobj.AuthTypeEnum;
@@ -12,7 +15,6 @@ import com.llf.ai.types.enums.ResponseCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
-import javax.annotation.Resource;
 import java.security.Principal;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -30,8 +32,11 @@ public class SshConnectionController {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    @Resource
-    private ISshConnectionService sshConnectionDomainService;
+    private final ISshConnectionService sshConnectionDomainService;
+
+    public SshConnectionController(ISshConnectionService sshConnectionDomainService) {
+        this.sshConnectionDomainService = sshConnectionDomainService;
+    }
 
     @RequestMapping(value = "create_connection", method = RequestMethod.POST)
     public Response<SshConnectionResponseDTO> createConnection(
@@ -201,7 +206,7 @@ public class SshConnectionController {
     }
 
     @RequestMapping(value = "test_connection", method = RequestMethod.POST)
-    public Response<Void> testConnection(@RequestBody SshConnectionRequestDTO requestDTO) {
+    public Response<SshHostKeyStatusDTO> testConnection(@RequestBody SshConnectionRequestDTO requestDTO) {
         try {
             log.info("测试SSH连接 host={}:{} user={}",
                     requestDTO.getHost(), requestDTO.getPort(), requestDTO.getUsername());
@@ -209,26 +214,48 @@ public class SshConnectionController {
                     toEntity(requestDTO),
                     toConfigEntity(requestDTO));
 
-            return Response.<Void>builder()
+            return Response.<SshHostKeyStatusDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info("连接和认证均成功")
                     .build();
+        } catch (HostKeyVerificationException e) {
+            ResponseCode code = e.isChanged()
+                    ? ResponseCode.SSH_HOST_KEY_CHANGED
+                    : ResponseCode.SSH_HOST_KEY_UNTRUSTED;
+            log.warn("SSH 主机密钥校验拒绝 host={}:{} fingerprint={} changed={}",
+                    requestDTO.getHost(), requestDTO.getPort(), e.getFingerprint(), e.isChanged());
+            return Response.<SshHostKeyStatusDTO>builder()
+                    .code(code.getCode())
+                    .info(e.getMessage())
+                    .data(SshHostKeyStatusDTO.builder()
+                            .fingerprint(e.getFingerprint())
+                            .algorithm(e.getAlgorithm())
+                            .changed(e.isChanged())
+                            .build())
+                    .build();
+        } catch (SshTargetBlockedException e) {
+            log.warn("SSH 测试目标被出站策略拒绝 host={}:{}",
+                    requestDTO.getHost(), requestDTO.getPort());
+            return Response.<SshHostKeyStatusDTO>builder()
+                    .code(ResponseCode.SSH_TARGET_BLOCKED.getCode())
+                    .info(e.getMessage())
+                    .build();
         } catch (IllegalArgumentException e) {
             log.warn("测试SSH连接参数错误: {}", e.getMessage());
-            return Response.<Void>builder()
+            return Response.<SshHostKeyStatusDTO>builder()
                     .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
                     .info(e.getMessage())
                     .build();
         } catch (IllegalStateException e) {
             log.warn("测试SSH连接失败 host={}:{} error={}",
                     requestDTO.getHost(), requestDTO.getPort(), e.getMessage());
-            return Response.<Void>builder()
+            return Response.<SshHostKeyStatusDTO>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(e.getMessage())
                     .build();
         } catch (Exception e) {
             log.error("测试SSH连接异常 host={}:{}", requestDTO.getHost(), requestDTO.getPort(), e);
-            return Response.<Void>builder()
+            return Response.<SshHostKeyStatusDTO>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info("连接测试失败: " + e.getMessage())
                     .build();
@@ -236,32 +263,53 @@ public class SshConnectionController {
     }
 
     @RequestMapping(value = "connect", method = RequestMethod.POST)
-    public Response<Void> connect(@RequestParam("connectionId") String connectionId,
-                                  Principal principal) {
+    public Response<SshHostKeyStatusDTO> connect(@RequestParam("connectionId") String connectionId,
+                                                 Principal principal) {
         try {
             log.info("建立SSH连接 connectionId={}", connectionId);
             boolean success = sshConnectionDomainService.connect(principal.getName(), connectionId);
 
             if (success) {
-                return Response.<Void>builder()
+                return Response.<SshHostKeyStatusDTO>builder()
                         .code(ResponseCode.SUCCESS.getCode())
                         .info("连接成功")
                         .build();
             } else {
-                return Response.<Void>builder()
+                return Response.<SshHostKeyStatusDTO>builder()
                         .code(ResponseCode.UN_ERROR.getCode())
                         .info("连接失败，请检查主机地址、端口和认证信息")
                         .build();
             }
+        } catch (HostKeyVerificationException e) {
+            ResponseCode code = e.isChanged()
+                    ? ResponseCode.SSH_HOST_KEY_CHANGED
+                    : ResponseCode.SSH_HOST_KEY_UNTRUSTED;
+            log.warn("建立SSH连接时主机密钥校验拒绝 connectionId={} fingerprint={} changed={}",
+                    connectionId, e.getFingerprint(), e.isChanged());
+            return Response.<SshHostKeyStatusDTO>builder()
+                    .code(code.getCode())
+                    .info(e.getMessage())
+                    .data(SshHostKeyStatusDTO.builder()
+                            .fingerprint(e.getFingerprint())
+                            .algorithm(e.getAlgorithm())
+                            .changed(e.isChanged())
+                            .build())
+                    .build();
+        } catch (SshTargetBlockedException e) {
+            log.warn("SSH 连接目标被出站策略拒绝 connectionId={}", connectionId);
+            return Response.<SshHostKeyStatusDTO>builder()
+                    .code(ResponseCode.SSH_TARGET_BLOCKED.getCode())
+                    .info(e.getMessage())
+                    .build();
         } catch (IllegalArgumentException e) {
             log.warn("建立SSH连接参数错误: {}", e.getMessage());
-            return Response.<Void>builder()
+            return Response.<SshHostKeyStatusDTO>builder()
                     .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
                     .info(e.getMessage())
                     .build();
         } catch (Exception e) {
             log.error("建立SSH连接失败 connectionId={}", connectionId, e);
-            return Response.<Void>builder()
+            return Response.<SshHostKeyStatusDTO>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info("连接失败: " + e.getMessage())
                     .build();
@@ -310,6 +358,7 @@ public class SshConnectionController {
                 .startupCommand(dto.getStartupCommand())
                 .compression(dto.getCompression())
                 .strictHostKeyCheck(dto.getStrictHostKeyCheck())
+                .knownHosts(dto.getHostKeyFingerprint())
                 .build();
     }
 
@@ -330,6 +379,7 @@ public class SshConnectionController {
                 .startupCommand(configEntity != null ? configEntity.getStartupCommand() : null)
                 .compression(configEntity != null ? configEntity.getCompression() : null)
                 .strictHostKeyCheck(configEntity != null ? configEntity.getStrictHostKeyCheck() : null)
+                .hostKeyFingerprint(configEntity != null ? configEntity.getKnownHosts() : null)
                 .build();
     }
 

@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -213,7 +214,12 @@ public class TerminalSessionPort implements ITerminalSessionPort {
 
         ReentrantLock commandLock = commandExecutionLocks.computeIfAbsent(
                 sessionId, key -> new ReentrantLock(true));
-        commandLock.lock();
+        try {
+            commandLock.lockInterruptibly();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CancellationException("AI 命令在等待执行锁时已取消");
+        }
         try {
             return executeCommandInExecChannel(sessionId, command, timeoutMs);
         } finally {
@@ -261,8 +267,8 @@ public class TerminalSessionPort implements ITerminalSessionPort {
             timedOut = execCommand.isOpen();
 
             if (timedOut) {
-                log.warn("AI 命令执行超时，终止独立 exec channel sessionId={} command={}",
-                        sessionId, safeCommand);
+                log.warn("AI 命令执行超时，终止独立 exec channel sessionId={} commandLength={}",
+                        sessionId, safeCommand.length());
                 signalCommand(execCommand, Signal.TERM, sessionId);
                 execCommand.join(COMMAND_CANCEL_GRACE_MS, TimeUnit.MILLISECONDS);
             }
@@ -302,6 +308,17 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                 closeQuietly(execCommand, "AI 命令 channel", sessionId);
             }
         }
+    }
+
+    @Override
+    public boolean cancelActiveCommand(String sessionId) {
+        Session.Command command = activeCommands.get(sessionId);
+        if (command == null) {
+            return false;
+        }
+        signalCommand(command, Signal.TERM, sessionId);
+        closeQuietly(command, "AI 命令 channel", sessionId);
+        return true;
     }
 
     private Thread startCommandOutputReader(

@@ -81,7 +81,8 @@ public class SshTerminalService implements ISshTerminalService {
     @Override
     public CommandExecutionResult executeCommandWithResult(
             String ownerId, String sessionId, String command) {
-        log.debug("执行命令 sessionId={} command={}", sessionId, command);
+        log.debug("执行命令 sessionId={} commandLength={}",
+                sessionId, command == null ? 0 : command.length());
 
         // 1. 校验会话
         TerminalSessionEntity entity = getActiveSession(ownerId, sessionId);
@@ -108,6 +109,17 @@ public class SshTerminalService implements ISshTerminalService {
                 sessionId, result.output().length(), result.exitCode(), result.timedOut(), result.exitCodeKnown());
 
         return result;
+    }
+
+    @Override
+    public boolean cancelCommand(String ownerId, String sessionId) {
+        TerminalSessionEntity entity = getActiveSession(ownerId, sessionId);
+        if (entity == null) {
+            throw new IllegalArgumentException("终端会话不存在或已关闭");
+        }
+        boolean cancelled = terminalSessionService.cancelActiveCommand(sessionId);
+        if (cancelled) entity.touch();
+        return cancelled;
     }
 
     @Override

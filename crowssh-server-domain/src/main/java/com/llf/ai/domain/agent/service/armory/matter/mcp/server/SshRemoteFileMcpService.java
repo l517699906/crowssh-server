@@ -33,6 +33,7 @@ public class SshRemoteFileMcpService {
     private static final int DEFAULT_READ_CHARS = 20_000;
     private static final int MAX_READ_CHARS = 50_000;
     private static final int MAX_PATH_LENGTH = 2048;
+    private static final String REMOTE_FILE_FAILURE_MESSAGE = "远程文件工具执行失败，请稍后重试。";
 
     private final ISftpService sftpService;
 
@@ -282,12 +283,9 @@ public class SshRemoteFileMcpService {
     }
 
     private Map<String, Object> failure(Exception error) {
-        String message = error.getMessage();
-        if (message == null || message.isBlank()) {
-            message = "远程文件工具执行失败";
-        }
-        log.warn("SSH 远程文件只读操作失败: {}", message);
-        return Map.of("success", false, "error", message);
+        log.warn("SSH 远程文件只读操作失败: exceptionType={}",
+                error.getClass().getName());
+        return Map.of("success", false, "error", REMOTE_FILE_FAILURE_MESSAGE);
     }
 
     @Data

@@ -1,5 +1,31 @@
 server:
   port: 8091
+  forward-headers-strategy: framework
+
+# 设备身份注册默认保留匿名安装流程，但限制来源和总量；受控部署可通过注册码或关闭入口进一步收紧。
+crowssh:
+  security:
+    allowed-origins: ${CROWSSH_ALLOWED_ORIGINS:tauri://localhost,http://tauri.localhost}
+  crypto:
+    primary-key-id: ${CROWSSH_CRYPTO_PRIMARY_KEY_ID:primary}
+    primary-key: ${CROWSSH_CRYPTO_PRIMARY_KEY:}
+    previous-keys: ${CROWSSH_CRYPTO_PREVIOUS_KEYS:}
+    legacy-keys: ${CROWSSH_CRYPTO_LEGACY_KEYS:}
+    allow-insecure-development-key: false
+  auth:
+    registration:
+      enabled: ${CROWSSH_DEVICE_REGISTRATION_ENABLED:true}
+      invite-code: ${CROWSSH_DEVICE_REGISTRATION_INVITE_CODE:}
+      max-per-ip: ${CROWSSH_DEVICE_REGISTRATION_MAX_PER_IP:5}
+      window-seconds: ${CROWSSH_DEVICE_REGISTRATION_WINDOW_SECONDS:3600}
+      max-active-principals: ${CROWSSH_DEVICE_REGISTRATION_MAX_ACTIVE:1000}
+  ssh:
+    egress:
+      # 生产默认拒绝私网/回环/链路本地地址；仅填入明确的主机或 *.受控域名。
+      allowed-private-hosts: ${CROWSSH_SSH_ALLOWED_PRIVATE_HOSTS:}
+  ai:
+    command-approval:
+      timeout-seconds: ${CROWSSH_AI_COMMAND_APPROVAL_TIMEOUT_SECONDS:60}
 
 # 线程池配置
 thread:
@@ -16,7 +42,7 @@ thread:
 #spring:
 #  datasource:
 #    username: root
-#    password: 123456
+#    password: ${CROWSSH_DB_PASSWORD}
 #    url: jdbc:mysql://127.0.0.1:3306/xfg_frame_archetype?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true
 #    driver-class-name: com.mysql.cj.jdbc.Driver
 #  hikari:

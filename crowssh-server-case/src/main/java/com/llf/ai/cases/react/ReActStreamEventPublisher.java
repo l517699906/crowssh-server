@@ -15,7 +15,8 @@ import java.io.IOException;
 @Component
 public class ReActStreamEventPublisher {
 
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
+    private static final String AGENT_EXECUTION_FAILURE_MESSAGE = "智能体执行失败，请稍后重试。";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -76,12 +77,19 @@ public class ReActStreamEventPublisher {
             ToolExecutionEvent executionEvent
     ) throws IOException {
         ReActEventDTO event = new ReActEventDTO();
-        event.setEvent("running".equals(executionEvent.getStatus()) ? "tool_call" : "tool_result");
+        event.setEvent(switch (executionEvent.getStatus()) {
+            case "approval_required" -> "tool_approval_required";
+            case "running" -> "tool_call";
+            default -> "tool_result";
+        });
         event.setToolCallId(executionEvent.getToolCallId());
         event.setToolName(executionEvent.getToolName());
         event.setCommand(executionEvent.getCommand());
         event.setStatus(executionEvent.getStatus());
         event.setStartedAt(executionEvent.getStartedAt());
+        event.setApprovalId(executionEvent.getApprovalId());
+        event.setExpiresAt(executionEvent.getExpiresAt());
+        event.setRiskLevel(executionEvent.getRiskLevel());
 
         if ("tool_result".equals(event.getEvent())) {
             event.setCompletedAt(executionEvent.getCompletedAt());
@@ -135,13 +143,10 @@ public class ReActStreamEventPublisher {
         send(context, event);
     }
 
-    public void sendError(
-            DefaultReActFactory.DynamicContext context,
-            String content
-    ) throws IOException {
+    public void sendError(DefaultReActFactory.DynamicContext context) throws IOException {
         ReActEventDTO event = new ReActEventDTO();
         event.setEvent("error");
-        event.setContent(content);
+        event.setContent(AGENT_EXECUTION_FAILURE_MESSAGE);
         event.setCode("AGENT_STREAM_ERROR");
         event.setRetryable(false);
         send(context, event);

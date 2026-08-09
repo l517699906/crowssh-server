@@ -47,4 +47,9 @@ public class DevicePrincipalRepository implements IDevicePrincipalRepository {
                 .revokedAt(po.getRevokedAt())
                 .build());
     }
+
+    @Override
+    public long countActive() {
+        return devicePrincipalDAO.countActive();
+    }
 }

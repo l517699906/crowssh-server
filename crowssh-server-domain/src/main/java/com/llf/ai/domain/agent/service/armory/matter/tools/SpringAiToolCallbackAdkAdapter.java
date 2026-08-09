@@ -22,6 +22,7 @@ import java.util.UUID;
 public final class SpringAiToolCallbackAdkAdapter extends BaseTool {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String TOOL_EXECUTION_FAILURE_MESSAGE = "工具执行失败，请稍后重试。";
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
     };
 
@@ -72,8 +73,9 @@ public final class SpringAiToolCallbackAdkAdapter extends BaseTool {
                 errorMessage = resultMessage(result);
             }
         } catch (Exception error) {
-            log.error("Spring AI 工具执行失败: tool={}", name(), error);
-            errorMessage = error.getMessage() == null ? "工具执行失败" : error.getMessage();
+            log.error("Spring AI 工具执行失败: tool={} exceptionType={}",
+                    name(), error.getClass().getName());
+            errorMessage = TOOL_EXECUTION_FAILURE_MESSAGE;
             result = Map.of("status", "error", "message", errorMessage);
             status = "error";
             outputLength = 0;

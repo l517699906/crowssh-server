@@ -16,4 +16,9 @@ public interface IDevicePrincipalDAO extends BaseMapper<DevicePrincipalPO> {
                 .eq(DevicePrincipalPO::getTokenHash, tokenHash)
                 .eq(DevicePrincipalPO::getStatus, 1));
     }
+
+    default long countActive() {
+        return selectCount(Wrappers.<DevicePrincipalPO>lambdaQuery()
+                .eq(DevicePrincipalPO::getStatus, 1));
+    }
 }

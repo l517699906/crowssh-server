@@ -8,6 +8,7 @@ import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.cases.react.guard.ToolResultConsistencyGuard;
+import com.llf.ai.domain.agent.service.IChatContextService;
 import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.IPromptService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
@@ -16,10 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.Resource;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CancellationException;
 
 /**
@@ -49,11 +47,16 @@ import java.util.concurrent.CancellationException;
 @Component("reactAiCallNode")
 public class AiCallNode extends AbstractAIAgentReActSupport {
 
+    private static final String AGENT_EXECUTION_FAILURE_MESSAGE = "智能体执行失败，请稍后重试。";
+
     @Resource
     private IChatService chatService;
 
     @Resource
     private IPromptService promptService;
+
+    @Resource
+    private IChatContextService chatContextService;
 
     @Resource
     private ToolResultConsistencyGuard toolResultConsistencyGuard;
@@ -68,7 +71,11 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 2. 重置当前轮次缓冲
         dynamicContext.resetRoundBuffers();
 
-        // 3. 显式绑定工具执行上下文。Spring AI 适配层不会向 ADK 工具传递 ToolContext。
+        // 3. 裁剪消息历史（优先级 + 滑动窗口混合策略，8000 token 预算） - 这部分也可以作为配置，根据模型不同来调整。
+        List<Map<String, Object>> trimmedHistory = chatContextService.trimHistory(dynamicContext.getMessageHistory(), 8000);
+        dynamicContext.setMessageHistory(new ArrayList<>(trimmedHistory));
+
+        // 4. 显式绑定工具执行上下文。Spring AI 适配层不会向 ADK 工具传递 ToolContext。
         String terminalSessionId = dynamicContext.getTerminalSessionId();
         SshExecuteAdkTool.setCurrentExecutionContext(
                 requestParameter.getUserId(),
@@ -77,22 +84,20 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 dynamicContext.getSessionId()
         );
 
-        // 4. 构建动态上下文并注入用户消息
+        // 5. 构建动态上下文并注入用户消息
         String enrichedMessage = buildEnrichedMessage(lastUserMessage, dynamicContext);
         log.debug("注入动态上下文后消息长度: {} -> {}", lastUserMessage.length(), enrichedMessage.length());
 
-        // 5. 重置 ReAct 循环标志
+        // 6. 重置 ReAct 循环标志
         dynamicContext.setStopReason(null);
         dynamicContext.setErrorMessage(null);
 
-        // 6. 通过领域服务调用 ADK Runner，保留会话和 SSH 资源归属校验
+        // 7. 通过领域服务调用 ADK Runner，保留会话和 SSH 资源归属校验
         StringBuilder textAccumulator = new StringBuilder();
         int roundToolCalls = 0;
         boolean hasError = false;
-        StringBuilder errorBuilder = new StringBuilder();
 
-        log.info("调用 ADK Runner，用户消息: {}", lastUserMessage.length() > 200
-                ? lastUserMessage.substring(0, 200) + "..." : lastUserMessage);
+        log.info("调用 ADK Runner，用户消息长度: {}", lastUserMessage.length());
 
         try {
             Iterator<Event> events = chatService.handleMessageStream(
@@ -119,7 +124,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                         event.finalResponse(),
                         eventText.length());
 
-                // 6.1 缓冲模型文本，等待本轮工具结果齐备后再做一致性校验和发布。
+                // 7.1 缓冲模型文本，等待本轮工具结果齐备后再做一致性校验和发布。
                 if (!eventText.isBlank()) {
                     textAccumulator.append(eventText);
                 }
@@ -131,10 +136,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             if (e instanceof CancellationException || Thread.currentThread().isInterrupted()) {
                 throw e;
             }
-            log.error("ADK Runner 调用失败", e);
+            log.error("ADK Runner 调用失败: exceptionType={}", e.getClass().getName());
             hasError = true;
-            errorBuilder.append("ADK Runner error: ").append(e.getMessage());
-            dynamicContext.setErrorMessage(errorBuilder.toString());
+            dynamicContext.setErrorMessage(AGENT_EXECUTION_FAILURE_MESSAGE);
             dynamicContext.setStopReason("error");
         } finally {
             // 请求结束后必须清除，避免线程复用时串用其他会话的 SSH 资源。
@@ -144,7 +148,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         roundToolCalls = processCompletedToolEvents(dynamicContext);
         publishReconciledText(dynamicContext, textAccumulator, hasError);
 
-        // 9. 更新步数和工具调用统计
+        // 8. 更新步数和工具调用统计
         dynamicContext.incrementStep();
         dynamicContext.getResult().setTotalSteps(dynamicContext.getStep());
         dynamicContext.getResult().setTotalToolCalls(
@@ -154,7 +158,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         log.info("ReAct AiCallNode - 第 {} 步完成，本轮工具调用 {} 次，文本长度 {}",
                 dynamicContext.getStep(), roundToolCalls, textAccumulator.length());
 
-        // 10. 发送本轮结束事件
+        // 9. 发送本轮结束事件
         sendRoundEndEvent(
                 dynamicContext,
                 dynamicContext.getStep(),
@@ -163,12 +167,12 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 dynamicContext.getResult().getTotalToolCalls()
         );
 
-        // 11. 错误处理
+        // 10. 错误处理
         if (hasError) {
             dynamicContext.setStopReason("error");
         }
 
-        // 12. 路由
+        // 11. 路由
         return router(requestParameter, dynamicContext);
     }
 
@@ -306,6 +310,10 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
             promptService.detectAndRecordMilestone(
                     dynamicContext.getSessionId(), "tool", milestoneContent(event));
+
+            // 记录工具执行摘要，供下一轮 Prompt 注入。
+            chatContextService.pushToolResult(
+                    dynamicContext.getSessionId(), event.getToolName(), resultContent);
         }
         return completedEvents.size();
     }
@@ -339,7 +347,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 dynamicContext.getUserId(),
                 dynamicContext.getSessionId(),
                 dynamicContext.getTerminalSessionId(),
-                dynamicContext.getRecentCommands()
+                dynamicContext.getRecentCommands(),
+                dynamicContext.getMessageHistory()
         );
     }
 }

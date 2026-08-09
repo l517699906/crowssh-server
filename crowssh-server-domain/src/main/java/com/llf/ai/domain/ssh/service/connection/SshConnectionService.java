@@ -48,11 +48,14 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
         // 3. 连接 ID 只能由服务端生成，避免调用方控制全局运行时资源键。
         entity.setConnectionId(UUID.randomUUID().toString().replace("-", ""));
 
-        // 4. 保存连接
+        // 4. 严格模式下必须先完成显式主机指纹确认
+        configEntity = prepareConfig(configEntity);
+        requireTrustedHostKey(configEntity);
+
+        // 5. 保存连接
         repository.saveConnection(entity);
 
-        // 5. 保存高级配置
-        configEntity = prepareConfig(configEntity);
+        // 6. 保存高级配置
         configEntity.setConnectionId(entity.getConnectionId());
         repository.saveConnectionConfig(configEntity);
 
@@ -74,6 +77,9 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
             throw new IllegalArgumentException("连接不存在");
         }
 
+        boolean endpointChanged = !existing.getHost().equals(entity.getHost())
+                || !existing.getPort().equals(entity.getPort());
+
         // 3. 密码/私钥留空则保留原值
         if (entity.getPassword() == null || entity.getPassword().isEmpty()) {
             entity.setPassword(existing.getPassword());
@@ -86,17 +92,20 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
             entity.setEncrypted(existing.getEncrypted());
         }
 
-        // 4. 更新连接后断开旧会话，确保新地址和运行时配置立即生效
+        // 4. 在写入连接信息前完成配置校验，避免部分更新
+        SshConnectionConfigEntity existingConfig = repository.queryConnectionConfigById(entity.getConnectionId());
+        configEntity = configEntity == null
+                ? SshConnectionConfigEntity.builder().build()
+                : configEntity;
+        configEntity.setConnectionId(entity.getConnectionId());
+        mergeMissingConfig(configEntity, existingConfig, !endpointChanged);
+        prepareConfig(configEntity);
+        requireTrustedHostKey(configEntity);
+
+        // 5. 更新连接和高级配置后断开旧会话，确保新配置立即生效
         entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
         repository.updateConnection(normalizedOwnerId, entity);
-
-        // 5. 更新高级配置
-        if (configEntity != null) {
-            configEntity.setConnectionId(entity.getConnectionId());
-            mergeMissingConfig(configEntity, repository.queryConnectionConfigById(entity.getConnectionId()));
-            prepareConfig(configEntity);
-            repository.saveConnectionConfig(configEntity);
-        }
+        repository.saveConnectionConfig(configEntity);
 
         sshSessionService.disconnect(entity.getConnectionId());
 
@@ -202,7 +211,11 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
         return ownerId.trim();
     }
 
-    private void mergeMissingConfig(SshConnectionConfigEntity target, SshConnectionConfigEntity existing) {
+    private void mergeMissingConfig(
+            SshConnectionConfigEntity target,
+            SshConnectionConfigEntity existing,
+            boolean preserveHostKey
+    ) {
         if (existing == null) {
             target.withDefaults();
             return;
@@ -222,8 +235,14 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
         if (target.getStrictHostKeyCheck() == null) {
             target.setStrictHostKeyCheck(existing.getStrictHostKeyCheck());
         }
-        if (target.getKnownHosts() == null) {
+        if (preserveHostKey && target.getKnownHosts() == null) {
             target.setKnownHosts(existing.getKnownHosts());
+        }
+    }
+
+    private void requireTrustedHostKey(SshConnectionConfigEntity configEntity) {
+        if (configEntity.getKnownHosts() == null || configEntity.getKnownHosts().isBlank()) {
+            throw new IllegalArgumentException("请先测试连接并确认服务器指纹");
         }
     }
 

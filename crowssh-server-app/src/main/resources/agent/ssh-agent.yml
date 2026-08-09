@@ -11,7 +11,7 @@ ai:
           module:
             ai-api:
               base-url: https://api.deepseek.com
-              api-key: ${CROWSSH_BOOTSTRAP_AI_API_KEY:client-managed}
+              api-key: ${CROWSSH_BOOTSTRAP_AI_API_KEY}
               completions-path: v1/chat/completions
               embeddings-path: v1/embeddings
             chat-model:

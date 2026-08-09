@@ -35,9 +35,13 @@
   }
 
   async function requestJson(url, options) {
+    const identity = getLoginState();
     const response = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
+        ...(identity && identity.accessToken
+          ? { Authorization: `Bearer ${identity.accessToken}` }
+          : {}),
       },
       ...options,
     });
@@ -91,7 +95,7 @@
 
   function ensureLoggedInOrRedirect() {
     const state = getLoginState();
-    if (!state || !state.user) {
+    if (!state || !state.principalId || !state.accessToken) {
       window.location.replace("./login.html");
       return null;
     }
@@ -131,7 +135,7 @@
     };
 
     const state = {
-      userId: loginState.user,
+      userId: loginState.principalId,
       agentId: "",
       sessionId: "",
       loading: false,
@@ -347,9 +351,9 @@
 
     function initHeader() {
       const loginTime = loginState.ts ? new Date(loginState.ts).toLocaleString("zh-CN") : "未知时间";
-      elements.welcome.textContent = `欢迎回来，${loginState.user}。`;
-      elements.loginBadge.textContent = `用户 ${loginState.user}`;
-      elements.userText.textContent = `登录用户：${loginState.user} · 登录时间：${loginTime}`;
+      elements.welcome.textContent = `设备身份 ${loginState.principalId} 已就绪。`;
+      elements.loginBadge.textContent = `设备 ${loginState.principalId}`;
+      elements.userText.textContent = `设备身份：${loginState.principalId} · 注册时间：${loginTime}`;
     }
 
     async function boot() {

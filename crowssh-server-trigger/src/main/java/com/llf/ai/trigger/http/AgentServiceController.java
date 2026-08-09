@@ -5,6 +5,7 @@ import com.llf.ai.api.response.Response;
 import com.llf.ai.cases.IAIAgentReActServiceCase;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.service.IChatService;
+import com.llf.ai.domain.agent.service.armory.matter.tools.CommandApprovalService;
 import com.llf.ai.types.enums.ResponseCode;
 import com.llf.ai.types.exception.AppException;
 import jakarta.annotation.Resource;
@@ -21,11 +22,16 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/")
 public class AgentServiceController {
 
+    private static final String AGENT_INITIALIZATION_FAILURE_MESSAGE = "智能体初始化失败，请稍后重试。";
+
     @Resource
     private IChatService chatService;
 
     @Resource
     private IAIAgentReActServiceCase aiAgentReActServiceCase;
+
+    @Resource
+    private CommandApprovalService commandApprovalService;
 
     @RequestMapping(value = "query_ai_agent_config_list", method = RequestMethod.GET)
     public Response<List<AiAgentConfigResponseDTO>> queryAiAgentConfigList() {
@@ -48,13 +54,13 @@ public class AgentServiceController {
                     .data(responseDTOS)
                     .build();
         } catch (AppException e) {
-            log.error("查询智能体配置列表异常", e);
+            log.error("查询智能体配置列表异常: exceptionType={}", e.getClass().getName());
             return Response.<List<AiAgentConfigResponseDTO>>builder()
                     .code(e.getCode())
                     .info(e.getInfo())
                     .build();
         } catch (Exception e) {
-            log.error("查询智能体配置列表失败", e);
+            log.error("查询智能体配置列表失败: exceptionType={}", e.getClass().getName());
             return Response.<List<AiAgentConfigResponseDTO>>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(ResponseCode.UN_ERROR.getInfo())
@@ -88,13 +94,14 @@ public class AgentServiceController {
                     .data(responseDTO)
                     .build();
         } catch (AppException e) {
-            log.error("查询智能体配置列表异常", e);
+            log.error("创建会话异常: exceptionType={}", e.getClass().getName());
             return Response.<CreateSessionResponseDTO>builder()
                     .code(e.getCode())
                     .info(e.getInfo())
                     .build();
         } catch (Exception e) {
-            log.error("创建会话失败 agentId:{} userId:{}", requestDTO.getAgentId(), ownerId, e);
+            log.error("创建会话失败 agentId:{} userId:{} exceptionType={}",
+                    requestDTO.getAgentId(), ownerId, e.getClass().getName());
             return Response.<CreateSessionResponseDTO>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(ResponseCode.UN_ERROR.getInfo())
@@ -138,13 +145,14 @@ public class AgentServiceController {
                     .data(responseDTO)
                     .build();
         } catch (AppException e) {
-            log.error("智能体对话异常", e);
+            log.error("智能体对话异常: exceptionType={}", e.getClass().getName());
             return Response.<ChatResponseDTO>builder()
                     .code(e.getCode())
                     .info(e.getInfo())
                     .build();
         } catch (Exception e) {
-            log.error("智能体对话失败 agentId:{} userId:{}", requestDTO.getAgentId(), ownerId, e);
+            log.error("智能体对话失败 agentId:{} userId:{} exceptionType={}",
+                    requestDTO.getAgentId(), ownerId, e.getClass().getName());
             return Response.<ChatResponseDTO>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info(ResponseCode.UN_ERROR.getInfo())
@@ -168,10 +176,75 @@ public class AgentServiceController {
             return aiAgentReActServiceCase.chatStream(requestDTO);
 
         } catch (Exception e) {
-            log.error("ReAct 流式对话初始化失败", e);
+            log.error("ReAct 流式对话初始化失败: exceptionType={}", e.getClass().getName());
             ResponseBodyEmitter emitter = new ResponseBodyEmitter();
-            emitter.completeWithError(e);
+            emitter.completeWithError(new IllegalStateException(AGENT_INITIALIZATION_FAILURE_MESSAGE));
             return emitter;
+        }
+    }
+
+    @PostMapping("command_approvals/{approvalId}/decision")
+    public Response<Void> decideCommandApproval(
+            @PathVariable String approvalId,
+            @RequestBody CommandApprovalDecisionRequestDTO requestDTO,
+            Principal principal
+    ) {
+        try {
+            if (requestDTO == null || requestDTO.getDecision() == null) {
+                throw new IllegalArgumentException("审批决定不能为空");
+            }
+            CommandApprovalService.Decision decision = switch (
+                    requestDTO.getDecision().trim().toLowerCase()) {
+                case "approve", "approved" -> CommandApprovalService.Decision.APPROVED;
+                case "deny", "denied" -> CommandApprovalService.Decision.DENIED;
+                default -> throw new IllegalArgumentException("审批决定只能是 approve 或 deny");
+            };
+            CommandApprovalService.Decision actual = commandApprovalService.decide(
+                    approvalId,
+                    principal.getName(),
+                    requestDTO.getSessionId(),
+                    decision);
+            if (actual != decision) {
+                return Response.<Void>builder()
+                        .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                        .info("命令审批已结束: " + actual.name().toLowerCase())
+                        .build();
+            }
+            return Response.<Void>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info(decision == CommandApprovalService.Decision.APPROVED
+                            ? "命令已批准" : "命令已拒绝")
+                    .build();
+        } catch (IllegalArgumentException e) {
+            return Response.<Void>builder()
+                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                    .info(e.getMessage())
+                    .build();
+        }
+    }
+
+    @PostMapping("chat_stream/cancel")
+    public Response<Void> cancelChatStream(
+            @RequestBody ChatStreamCancelRequestDTO requestDTO,
+            Principal principal
+    ) {
+        try {
+            if (requestDTO == null) {
+                throw new IllegalArgumentException("取消请求不能为空");
+            }
+            aiAgentReActServiceCase.cancelStream(
+                    principal.getName(),
+                    requestDTO.getSessionId(),
+                    requestDTO.getTerminalSessionId());
+            return Response.<Void>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info("取消请求已处理")
+                    .build();
+        } catch (IllegalArgumentException e) {
+            return Response.<Void>builder()
+                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                    .info(e.getMessage())
+                    .build();
         }
     }
 }

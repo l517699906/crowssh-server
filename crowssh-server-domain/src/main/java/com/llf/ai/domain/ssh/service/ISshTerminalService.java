@@ -40,6 +40,13 @@ public interface ISshTerminalService {
     }
 
     /**
+     * 取消当前会话中正在执行的 AI 命令。
+     */
+    default boolean cancelCommand(String ownerId, String sessionId) {
+        return false;
+    }
+
+    /**
      * 调整终端大小
      *
      * @param sessionId 会话ID

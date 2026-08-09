@@ -33,6 +33,11 @@ public interface IAIAgentReActServiceCase {
     ResponseBodyEmitter chatStream(ChatRequestDTO requestDTO);
 
     /**
+     * 主动取消指定设备身份拥有的流式会话。
+     */
+    boolean cancelStream(String ownerId, String sessionId, String terminalSessionId);
+
+    /**
      * 普通对话（单轮，非流式）
      *
      * @param requestDTO 对话请求

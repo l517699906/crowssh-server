@@ -8,15 +8,19 @@ import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.cases.react.node.RootNode;
 import com.llf.ai.domain.agent.model.valobj.RuntimeModelConfig;
 import com.llf.ai.domain.agent.service.IChatService;
+import com.llf.ai.domain.agent.service.armory.matter.tools.CommandApprovalService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionObserverRegistry;
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelScope;
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelService;
+import com.llf.ai.domain.ssh.service.ISshTerminalService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 import javax.annotation.Resource;
 import java.util.concurrent.CancellationException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -38,6 +42,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
     private static final long STREAM_TIMEOUT_MILLIS = 10 * 60 * 1000L;
     private static final long HEARTBEAT_INTERVAL_MILLIS = 15 * 1000L;
+    private static final String AGENT_INITIALIZATION_FAILURE_MESSAGE = "智能体初始化失败，请稍后重试。";
+    private static final String AGENT_EXECUTION_FAILURE_MESSAGE = "智能体执行失败，请稍后重试。";
 
     @Resource(name = "reactRootNode")
     private RootNode rootNode;
@@ -51,9 +57,18 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     @Resource
     private ReActStreamEventPublisher streamEventPublisher;
 
+    @Resource
+    private CommandApprovalService commandApprovalService;
+
+    @Resource
+    private ISshTerminalService sshTerminalService;
+
+    private final Map<String, ActiveStream> activeStreams = new ConcurrentHashMap<>();
+
     @Override
     public ResponseBodyEmitter chatStream(ChatRequestDTO requestDTO) {
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(STREAM_TIMEOUT_MILLIS);
+        String registeredSessionId = null;
 
         try {
             String sessionId = ensureSession(requestDTO);
@@ -71,7 +86,18 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     .streamActive(streamActive)
                     .build();
 
-            Runnable cancelStream = () -> cancelStream(streamActive, streamThreadRef);
+            Runnable cancelStream = () -> cancelStreamInternal(
+                    streamActive,
+                    streamThreadRef,
+                    requestDTO.getUserId(),
+                    sessionId,
+                    requestDTO.getTerminalSessionId());
+            ActiveStream activeStream = new ActiveStream(
+                    requestDTO.getUserId(), requestDTO.getTerminalSessionId(), cancelStream);
+            if (activeStreams.putIfAbsent(sessionId, activeStream) != null) {
+                throw new IllegalStateException("该 AI 会话已有正在运行的流式请求");
+            }
+            registeredSessionId = sessionId;
             registerEmitterCallbacks(
                     emitter,
                     sessionId,
@@ -90,9 +116,12 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             streamThread.start();
 
         } catch (Exception e) {
-            log.error("ReAct 流式对话初始化失败", e);
+            log.error("ReAct 流式对话初始化失败: exceptionType={}", e.getClass().getName());
+            if (registeredSessionId != null) {
+                activeStreams.remove(registeredSessionId);
+            }
             requestDTO.clearRuntimeSecret();
-            emitter.completeWithError(e);
+            emitter.completeWithError(new IllegalStateException(AGENT_INITIALIZATION_FAILURE_MESSAGE));
         }
 
         return emitter;
@@ -115,8 +144,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 try {
                     streamEventPublisher.sendExecutionEvent(dynamicContext, executionEvent);
                 } catch (Exception e) {
-                    log.warn("工具执行事件发送失败: toolCallId={}, reason={}",
-                            executionEvent.getToolCallId(), e.getMessage());
+                    log.warn("工具执行事件发送失败: toolCallId={}, exceptionType={}",
+                            executionEvent.getToolCallId(), e.getClass().getName());
                     cancelStream.run();
                 }
             };
@@ -132,10 +161,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 }
 
                 if ("error".equals(result.getStopReason())) {
-                    String error = result.getError() == null || result.getError().isBlank()
-                            ? "智能体执行失败"
-                            : result.getError();
-                    streamEventPublisher.sendError(dynamicContext, error);
+                    streamEventPublisher.sendError(dynamicContext);
                 } else {
                     streamEventPublisher.sendStatus(dynamicContext, "success", "处理完成");
                     streamEventPublisher.sendDone(dynamicContext, result);
@@ -153,14 +179,13 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 if (cancelled) {
                     log.info("ReAct 流式对话已终止 sessionId={}", sessionId);
                 } else {
-                    log.error("ReAct 流式对话异常 sessionId={}", sessionId, e);
+                    log.error("ReAct 流式对话异常 sessionId={} exceptionType={}",
+                            sessionId, e.getClass().getName());
                     try {
-                        streamEventPublisher.sendError(
-                                dynamicContext,
-                                e.getMessage() == null ? "智能体执行失败" : e.getMessage()
-                        );
+                        streamEventPublisher.sendError(dynamicContext);
                     } catch (Exception sendError) {
-                        log.debug("ReAct 错误事件发送失败: {}", sendError.getMessage());
+                        log.debug("ReAct 错误事件发送失败: exceptionType={}",
+                                sendError.getClass().getName());
                     }
                     responseCompleted.set(true);
                     dynamicContext.getEmitter().complete();
@@ -169,11 +194,31 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 dynamicContext.getStreamActive().set(false);
                 heartbeatThread.interrupt();
                 ToolExecutionObserverRegistry.unregister(sessionId, executionObserver);
+                activeStreams.remove(sessionId);
                 requestDTO.clearRuntimeSecret();
             }
         }, "react-stream-" + sessionId);
         streamThread.setDaemon(true);
         return streamThread;
+    }
+
+    @Override
+    public boolean cancelStream(String ownerId, String sessionId, String terminalSessionId) {
+        if (ownerId == null || ownerId.isBlank()
+                || sessionId == null || sessionId.isBlank()
+                || terminalSessionId == null || terminalSessionId.isBlank()) {
+            throw new IllegalArgumentException("取消请求缺少会话信息");
+        }
+        ActiveStream activeStream = activeStreams.get(sessionId);
+        if (activeStream == null) {
+            return false;
+        }
+        if (!activeStream.ownerId().equals(ownerId)
+                || !activeStream.terminalSessionId().equals(terminalSessionId)) {
+            throw new IllegalArgumentException("无权取消该 AI 流式会话");
+        }
+        activeStream.cancel().run();
+        return true;
     }
 
     @Override
@@ -199,8 +244,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             }
 
         } catch (Exception e) {
-            log.error("ReAct 普通对话异常", e);
-            return "Error: " + e.getMessage();
+            log.error("ReAct 普通对话异常: exceptionType={}", e.getClass().getName());
+            return AGENT_EXECUTION_FAILURE_MESSAGE;
         } finally {
             requestDTO.clearRuntimeSecret();
         }
@@ -231,8 +276,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         });
         emitter.onError(error -> {
             if (!responseCompleted.get() && streamActive.get()) {
-                log.warn("ReAct 流式连接异常，终止后台任务 sessionId={} reason={}",
-                        sessionId, error.getMessage());
+                log.warn("ReAct 流式连接异常，终止后台任务 sessionId={} exceptionType={}",
+                        sessionId, error.getClass().getName());
                 cancelStream.run();
             }
         });
@@ -244,12 +289,22 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         });
     }
 
-    private void cancelStream(
+    private void cancelStreamInternal(
             AtomicBoolean streamActive,
-            AtomicReference<Thread> streamThreadRef
+            AtomicReference<Thread> streamThreadRef,
+            String ownerId,
+            String agentSessionId,
+            String terminalSessionId
     ) {
         if (!streamActive.getAndSet(false)) {
             return;
+        }
+        commandApprovalService.cancelSession(ownerId, agentSessionId);
+        try {
+            sshTerminalService.cancelCommand(ownerId, terminalSessionId);
+        } catch (IllegalArgumentException e) {
+            log.debug("取消 AI SSH 命令时终端已结束 sessionId={} terminalSessionId={}",
+                    agentSessionId, terminalSessionId);
         }
         Thread streamThread = streamThreadRef.get();
         if (streamThread != null && streamThread != Thread.currentThread()) {
@@ -306,5 +361,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 runtimeModel.getTokenParameter(),
                 runtimeModel.getMaxTokens()
         );
+    }
+
+    private record ActiveStream(String ownerId, String terminalSessionId, Runnable cancel) {
     }
 }

@@ -21,9 +21,9 @@ spring:
 #      - classpath:agent/parallel_research_app.yml
       - classpath:agent/ssh-agent.yml
   datasource:
-    username: root
-    password:
-    url: jdbc:mysql://127.0.0.1:3306/crowssh?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true
+    username: ${CROWSSH_DB_USERNAME:root}
+    password: ${CROWSSH_DB_PASSWORD}
+    url: ${CROWSSH_DB_URL:jdbc:mysql://127.0.0.1:3306/crowssh?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true}
     driver-class-name: com.mysql.cj.jdbc.Driver
   hikari:
     pool-name: Retail_HikariCP
@@ -46,3 +46,33 @@ logging:
   level:
     root: info
   config: classpath:logback-spring.xml
+
+# 里程碑识别规则热加载
+ai:
+  agent:
+    milestone:
+      rules-file: ${MILESTONE_RULES_FILE:./config/milestone-rules.json}
+      reload-interval-ms: ${MILESTONE_RULES_RELOAD_INTERVAL_MS:2000}
+# 开发环境可通过环境变量显式放行受控内网测试目标，默认仍不放行。
+crowssh:
+  security:
+    allowed-origins: ${CROWSSH_ALLOWED_ORIGINS:tauri://localhost,http://tauri.localhost,http://localhost:1420,http://localhost:5173}
+  crypto:
+    primary-key-id: ${CROWSSH_CRYPTO_PRIMARY_KEY_ID:primary}
+    primary-key: ${CROWSSH_CRYPTO_PRIMARY_KEY:}
+    previous-keys: ${CROWSSH_CRYPTO_PREVIOUS_KEYS:}
+    legacy-keys: ${CROWSSH_CRYPTO_LEGACY_KEYS:}
+    allow-insecure-development-key: ${CROWSSH_CRYPTO_ALLOW_INSECURE_DEVELOPMENT_KEY:false}
+  auth:
+    registration:
+      enabled: ${CROWSSH_DEVICE_REGISTRATION_ENABLED:true}
+      invite-code: ${CROWSSH_DEVICE_REGISTRATION_INVITE_CODE:}
+      max-per-ip: ${CROWSSH_DEVICE_REGISTRATION_MAX_PER_IP:20}
+      window-seconds: ${CROWSSH_DEVICE_REGISTRATION_WINDOW_SECONDS:3600}
+      max-active-principals: ${CROWSSH_DEVICE_REGISTRATION_MAX_ACTIVE:1000}
+  ssh:
+    egress:
+      allowed-private-hosts: ${CROWSSH_SSH_ALLOWED_PRIVATE_HOSTS:}
+  ai:
+    command-approval:
+      timeout-seconds: ${CROWSSH_AI_COMMAND_APPROVAL_TIMEOUT_SECONDS:60}

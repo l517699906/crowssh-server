@@ -9,7 +9,7 @@ services:
     restart: always
     environment:
       TZ: Asia/Shanghai
-      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_ROOT_PASSWORD: ${CROWSSH_MYSQL_ROOT_PASSWORD:?CROWSSH_MYSQL_ROOT_PASSWORD is required}
     ports:
       - "13306:3306"
     volumes:
@@ -34,7 +34,7 @@ services:
     environment:
       - PMA_HOST=mysql
       - PMA_PORT=3306
-      - MYSQL_ROOT_PASSWORD=123qwe!@#QWE
+      - MYSQL_ROOT_PASSWORD=${CROWSSH_MYSQL_ROOT_PASSWORD:?CROWSSH_MYSQL_ROOT_PASSWORD is required}
     depends_on:
       mysql:
         condition: service_healthy
@@ -62,7 +62,6 @@ services:
       retries: 3
 
   # RedisAdmin https://github.com/joeferner/redis-commander
-  # 账密 admin/admin
   redis-admin:
     image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/redis-commander:0.8.0
     container_name: redis-admin
@@ -72,8 +71,8 @@ services:
       - 8081:8081
     environment:
       - REDIS_HOSTS=local:redis:6379
-      - HTTP_USER=admin
-      - HTTP_PASSWORD=admin
+      - HTTP_USER=${CROWSSH_REDIS_ADMIN_USER:?CROWSSH_REDIS_ADMIN_USER is required}
+      - HTTP_PASSWORD=${CROWSSH_REDIS_ADMIN_PASSWORD:?CROWSSH_REDIS_ADMIN_PASSWORD is required}
       - LANG=C.UTF-8
       - LANGUAGE=C.UTF-8
       - LC_ALL=C.UTF-8

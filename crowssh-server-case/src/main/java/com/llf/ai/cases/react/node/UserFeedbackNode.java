@@ -41,7 +41,8 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
             return result;
 
         } catch (Exception e) {
-            log.error("ReAct UserFeedbackNode 结果封装失败", e);
+            log.error("ReAct UserFeedbackNode 结果封装失败: exceptionType={}",
+                    e.getClass().getName());
             throw e;
         } finally {
             cleanup(dynamicContext);
@@ -102,7 +103,7 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
 
             log.debug("ReAct 上下文清理完成 sessionId={}", sessionId);
         } catch (Exception e) {
-            log.warn("ReAct 上下文清理异常: {}", e.getMessage());
+            log.warn("ReAct 上下文清理异常: exceptionType={}", e.getClass().getName());
         }
     }
 }

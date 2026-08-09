@@ -63,6 +63,13 @@ public interface ITerminalSessionPort {
     }
 
     /**
+     * 主动终止当前终端会话中由 AI 发起的独立 exec 命令。
+     */
+    default boolean cancelActiveCommand(String sessionId) {
+        return false;
+    }
+
+    /**
      * 调整终端大小
      *
      * @param sessionId 会话ID

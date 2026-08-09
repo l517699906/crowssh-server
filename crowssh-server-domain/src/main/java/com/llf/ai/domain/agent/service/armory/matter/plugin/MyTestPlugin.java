@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service("myTestPlugin")
@@ -32,10 +31,12 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Content> onUserMessageCallback(InvocationContext invocationContext, Content userMessage) {
         return Maybe.fromAction(() -> {
-            log.info("插件日志-🚀 用户输入信息 | invocationId:{} | userId:{} | content:{}",
+            int contentLength = userMessage == null || userMessage.text() == null
+                    ? 0 : userMessage.text().length();
+            log.info("插件日志-🚀 用户输入信息 | invocationId:{} | userId:{} | contentLength:{}",
                     invocationContext.invocationId(),
                     invocationContext.userId(),
-                    userMessage.text());
+                    contentLength);
         });
     }
 
@@ -74,10 +75,9 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<LlmResponse> afterModelCallback(CallbackContext callbackContext, LlmResponse llmResponse) {
         return Maybe.fromAction(() -> {
-            String contentText = formatContent(llmResponse.content());
-            log.info("插件日志-🧠 大模型响应 | agent:{} | content:{} | turnComplete:{}",
+            log.info("插件日志-🧠 大模型响应 | agent:{} | contentLength:{} | turnComplete:{}",
                     callbackContext.agentName(),
-                    contentText,
+                    contentLength(llmResponse.content()),
                     llmResponse.turnComplete().orElse(false));
 
             llmResponse.usageMetadata().ifPresent(usage -> {
@@ -91,62 +91,48 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Map<String, Object>> beforeToolCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext) {
         return Maybe.fromAction(() -> {
-            log.info("插件日志-🔧 工具调用开始 | tool:{} | agent:{} | args:{}",
+            log.info("插件日志-🔧 工具调用开始 | tool:{} | agent:{} | argumentCount:{}",
                     tool.name(),
                     toolContext.agentName(),
-                    formatArgs(toolArgs));
+                    sizeOf(toolArgs));
         });
     }
 
     @Override
     public Maybe<Map<String, Object>> afterToolCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Map<String, Object> result) {
         return Maybe.fromAction(() -> {
-            log.info("插件日志-🔧 工具调用完成 | tool:{} | agent:{} | result:{}",
+            log.info("插件日志-🔧 工具调用完成 | tool:{} | agent:{} | resultFieldCount:{}",
                     tool.name(),
                     toolContext.agentName(),
-                    formatArgs(result));
+                    sizeOf(result));
         });
     }
 
     @Override
     public Maybe<Map<String, Object>> onToolErrorCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Throwable error) {
         return Maybe.fromAction(() -> {
-            log.error("插件日志-🔧 工具调用异常 | tool:{} | agent:{} | args:{} | error:{}",
+            log.error("插件日志-🔧 工具调用异常 | tool:{} | agent:{} | argumentCount:{} | errorType:{}",
                     tool.name(),
                     toolContext.agentName(),
-                    formatArgs(toolArgs),
-                    error.getMessage(), error);
+                    sizeOf(toolArgs),
+                    error == null ? "unknown" : error.getClass().getName());
         });
     }
 
-    private String formatContent(Optional<Content> contentOptional) {
+    private int contentLength(Optional<Content> contentOptional) {
         if (contentOptional == null || contentOptional.isEmpty()) {
-            return "None";
+            return 0;
         }
         Content content = contentOptional.get();
         if (content.parts().isEmpty() || content.parts().get().isEmpty()) {
-            return "None";
+            return 0;
         }
-        String text = content.parts().get().stream()
-                .map(part -> part.text().orElse(""))
-                .collect(Collectors.joining("\n"))
-                .trim();
-        if (text.length() > 200) {
-            return text.substring(0, 200) + "...";
-        }
-        return text;
+        return content.parts().get().stream()
+                .mapToInt(part -> part.text().orElse("").length())
+                .sum();
     }
 
-    private String formatArgs(Map<String, Object> args) {
-        if (args == null || args.isEmpty()) {
-            return "{}";
-        }
-        String str = args.entrySet().stream()
-                .map(e -> e.getKey() + "=" + e.getValue())
-                .collect(Collectors.joining(", "));
-        if (str.length() > 300) {
-            return "{" + str.substring(0, 300) + "...}";
-        }
-        return "{" + str + "}";
+    private int sizeOf(Map<String, Object> values) {
+        return values == null ? 0 : values.size();
     }
 }

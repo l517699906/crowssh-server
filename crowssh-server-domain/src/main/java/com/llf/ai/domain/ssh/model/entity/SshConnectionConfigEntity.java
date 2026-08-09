@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.regex.Pattern;
 
 /**
  * SSH连接高级配置实体
@@ -17,6 +18,9 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @NoArgsConstructor
 public class SshConnectionConfigEntity {
+
+    private static final Pattern SHA256_FINGERPRINT = Pattern.compile(
+            "^SHA256:[A-Za-z0-9+/]{43}=?$");
 
     private Long id;
     private String connectionId;          // 关联的连接ID
@@ -35,7 +39,8 @@ public class SshConnectionConfigEntity {
         if (connectTimeout == null) connectTimeout = 30;
         if (keepaliveInterval == null) keepaliveInterval = 60;
         if (compression == null) compression = false;
-        if (strictHostKeyCheck == null) strictHostKeyCheck = true;
+        // 主机密钥校验是服务端安全边界，旧配置中的 false 也必须迁移为开启。
+        strictHostKeyCheck = true;
         return this;
     }
 
@@ -48,6 +53,10 @@ public class SshConnectionConfigEntity {
         }
         if (keepaliveInterval == null || keepaliveInterval < 0 || keepaliveInterval > 300) {
             throw new IllegalArgumentException("保活间隔必须在 0 到 300 秒之间");
+        }
+        if (knownHosts != null && !knownHosts.isBlank()
+                && !SHA256_FINGERPRINT.matcher(knownHosts.trim()).matches()) {
+            throw new IllegalArgumentException("SSH 主机密钥指纹格式不合法");
         }
     }
 }

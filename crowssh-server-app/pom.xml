@@ -12,8 +12,8 @@
     <packaging>jar</packaging>
 
     <properties>
-        <!-- 应用模块包含真实 SSH 集成测试；默认跳过，允许命令行显式启用聚焦测试。 -->
-        <crowssh.app.skip-tests>true</crowssh.app.skip-tests>
+        <!-- 默认执行纯单元测试；真实 SSH/AI/DB 测试由 IntegrationTest Category 隔离。 -->
+        <crowssh.app.skip-tests>false</crowssh.app.skip-tests>
     </properties>
 
     <dependencies>
@@ -68,6 +68,11 @@
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.vintage</groupId>
+            <artifactId>junit-vintage-engine</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -181,10 +186,12 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.6</version>
+                <version>3.5.2</version>
                 <configuration>
                     <skipTests>${crowssh.app.skip-tests}</skipTests>
                     <testFailureIgnore>false</testFailureIgnore>
+                    <groups>${crowssh.test.groups}</groups>
+                    <excludedGroups>${crowssh.test.excluded-groups}</excludedGroups>
                     <includes>
                         <include>**/*Test.java</include>
                     </includes>

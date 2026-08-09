@@ -8,12 +8,20 @@ services:
     container_name: ai-agent-scaffold
     restart: on-failure
     ports:
-      - "8091:8091"
+      - "127.0.0.1:8091:8091"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
       - TZ=PRC
       - SERVER_PORT=8091
+      - SPRING_PROFILES_ACTIVE=prod
+      - CROWSSH_CRYPTO_PRIMARY_KEY_ID=${CROWSSH_CRYPTO_PRIMARY_KEY_ID:-primary}
+      - CROWSSH_CRYPTO_PRIMARY_KEY=${CROWSSH_CRYPTO_PRIMARY_KEY:?CROWSSH_CRYPTO_PRIMARY_KEY is required}
+      - CROWSSH_CRYPTO_PREVIOUS_KEYS=${CROWSSH_CRYPTO_PREVIOUS_KEYS:-}
+      - CROWSSH_CRYPTO_LEGACY_KEYS=${CROWSSH_CRYPTO_LEGACY_KEYS:-}
+      - CROWSSH_DEVICE_REGISTRATION_ENABLED=${CROWSSH_DEVICE_REGISTRATION_ENABLED:-true}
+      - CROWSSH_DEVICE_REGISTRATION_INVITE_CODE=${CROWSSH_DEVICE_REGISTRATION_INVITE_CODE:-}
+      - CROWSSH_SSH_ALLOWED_PRIVATE_HOSTS=${CROWSSH_SSH_ALLOWED_PRIVATE_HOSTS:-}
     volumes:
       - ./log:/data/log
     logging:
