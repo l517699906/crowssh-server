@@ -88,7 +88,6 @@ public class ReActStreamEventPublisher {
         event.setStatus(executionEvent.getStatus());
         event.setStartedAt(executionEvent.getStartedAt());
         event.setApprovalId(executionEvent.getApprovalId());
-        event.setExpiresAt(executionEvent.getExpiresAt());
         event.setRiskLevel(executionEvent.getRiskLevel());
 
         if ("tool_result".equals(event.getEvent())) {

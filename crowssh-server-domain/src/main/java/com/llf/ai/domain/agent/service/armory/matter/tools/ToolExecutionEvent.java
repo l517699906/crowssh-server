@@ -20,7 +20,6 @@ public final class ToolExecutionEvent {
     private final int outputLength;
     private final String errorMessage;
     private final String approvalId;
-    private final Long expiresAt;
     private final String riskLevel;
 
     private ToolExecutionEvent(
@@ -34,7 +33,6 @@ public final class ToolExecutionEvent {
             int outputLength,
             String errorMessage,
             String approvalId,
-            Long expiresAt,
             String riskLevel
     ) {
         this.toolCallId = toolCallId;
@@ -48,7 +46,6 @@ public final class ToolExecutionEvent {
         this.outputLength = outputLength;
         this.errorMessage = errorMessage;
         this.approvalId = approvalId;
-        this.expiresAt = expiresAt;
         this.riskLevel = riskLevel;
     }
 
@@ -60,7 +57,7 @@ public final class ToolExecutionEvent {
     ) {
         return new ToolExecutionEvent(
                 toolCallId, toolName, arguments, Map.of(), "running", startedAt, 0, 0, null,
-                null, null, null);
+                null, null);
     }
 
     public static ToolExecutionEvent approvalRequired(
@@ -69,12 +66,11 @@ public final class ToolExecutionEvent {
             Map<String, Object> arguments,
             long startedAt,
             String approvalId,
-            long expiresAt,
             String riskLevel
     ) {
         return new ToolExecutionEvent(
                 toolCallId, toolName, arguments, Map.of(), "approval_required", startedAt, 0, 0,
-                null, approvalId, expiresAt, riskLevel);
+                null, approvalId, riskLevel);
     }
 
     public static ToolExecutionEvent completed(
@@ -90,7 +86,7 @@ public final class ToolExecutionEvent {
     ) {
         return new ToolExecutionEvent(
                 toolCallId, toolName, arguments, result, status, startedAt, completedAt,
-                outputLength, errorMessage, null, null, null);
+                outputLength, errorMessage, null, null);
     }
 
     public boolean isCompleted() {
@@ -144,10 +140,6 @@ public final class ToolExecutionEvent {
 
     public String getApprovalId() {
         return approvalId;
-    }
-
-    public Long getExpiresAt() {
-        return expiresAt;
     }
 
     public String getRiskLevel() {

@@ -63,7 +63,7 @@ public class ReActEventDTO {
      * - running: 执行中
      * - success: 执行成功
      * - error: 执行失败
-     * - denied / expired / cancelled: 未执行终态
+     * - denied / cancelled: 未执行终态
      */
     private String status;
 
@@ -89,9 +89,6 @@ public class ReActEventDTO {
 
     /** 一次性命令审批 ID */
     private String approvalId;
-
-    /** 审批过期时间戳 */
-    private Long expiresAt;
 
     /** 命令风险级别 */
     private String riskLevel;

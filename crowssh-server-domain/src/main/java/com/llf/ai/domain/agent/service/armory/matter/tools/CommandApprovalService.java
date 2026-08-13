@@ -2,21 +2,17 @@ package com.llf.ai.domain.agent.service.armory.matter.tools;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Clock;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 
 /**
  * AI SSH 命令的一次性审批状态机。
@@ -27,24 +23,7 @@ public class CommandApprovalService {
     private static final Logger AUDIT = LoggerFactory.getLogger("CROWSSH_SECURITY_AUDIT");
     private static final int MAX_PENDING_APPROVALS = 1_000;
 
-    private final long timeoutMillis;
-    private final Clock clock;
     private final Map<String, PendingApproval> approvals = new ConcurrentHashMap<>();
-
-    @Autowired
-    public CommandApprovalService(
-            @Value("${crowssh.ai.command-approval.timeout-seconds:60}") long timeoutSeconds
-    ) {
-        this(timeoutSeconds, Clock.systemUTC());
-    }
-
-    CommandApprovalService(long timeoutSeconds, Clock clock) {
-        if (timeoutSeconds < 10 || timeoutSeconds > 300) {
-            throw new IllegalArgumentException("AI 命令审批超时必须在 10 到 300 秒之间");
-        }
-        this.timeoutMillis = Math.multiplyExact(timeoutSeconds, 1000L);
-        this.clock = clock;
-    }
 
     public ApprovalTicket request(
             String ownerId,
@@ -64,7 +43,6 @@ public class CommandApprovalService {
             throw new IllegalStateException("待审批命令过多，请稍后重试");
         }
 
-        long expiresAt = clock.millis() + timeoutMillis;
         ApprovalTicket ticket;
         PendingApproval pending;
         do {
@@ -73,17 +51,13 @@ public class CommandApprovalService {
                     toolCallId,
                     commandHash(command),
                     command.length(),
-                    expiresAt,
-                    "elevated");
+                    "dangerous");
             pending = new PendingApproval(
                     ticket, ownerId, agentSessionId, terminalSessionId, connectionId,
                     new CompletableFuture<>());
         } while (approvals.putIfAbsent(ticket.approvalId(), pending) != null);
 
-        PendingApproval scheduled = pending;
-        CompletableFuture.delayedExecutor(timeoutMillis, TimeUnit.MILLISECONDS)
-                .execute(() -> expire(scheduled));
-        audit("required", scheduled, Decision.PENDING, null, null, null);
+        audit("required", pending, Decision.PENDING, null, null, null);
         return ticket;
     }
 
@@ -115,9 +89,7 @@ public class CommandApprovalService {
                 || !pending.agentSessionId().equals(agentSessionId)) {
             throw new IllegalArgumentException("命令审批不属于当前设备或 AI 会话");
         }
-        if (clock.millis() >= pending.ticket().expiresAt()) {
-            expire(pending);
-        } else if (pending.decision().complete(decision)) {
+        if (pending.decision().complete(decision)) {
             audit("decision", pending, decision, null, null, null);
         }
         return pending.decision().getNow(Decision.PENDING);
@@ -169,12 +141,6 @@ public class CommandApprovalService {
         }
     }
 
-    private void expire(PendingApproval pending) {
-        if (pending.decision().complete(Decision.EXPIRED)) {
-            audit("decision", pending, Decision.EXPIRED, null, null, null);
-        }
-    }
-
     private PendingApproval requirePending(String approvalId) {
         PendingApproval pending = approvalId == null ? null : approvals.get(approvalId);
         if (pending == null) {
@@ -218,7 +184,6 @@ public class CommandApprovalService {
         PENDING,
         APPROVED,
         DENIED,
-        EXPIRED,
         CANCELLED
     }
 
@@ -227,7 +192,6 @@ public class CommandApprovalService {
             String toolCallId,
             String commandHash,
             int commandLength,
-            long expiresAt,
             String riskLevel
     ) {
     }

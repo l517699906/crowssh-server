@@ -14,6 +14,8 @@ public final class ToolExecutionObserverRegistry {
 
     private static final Map<String, CopyOnWriteArraySet<Observer>> OBSERVERS =
             new ConcurrentHashMap<>();
+    private static final Map<String, CopyOnWriteArraySet<Observer>> APPROVAL_OBSERVERS =
+            new ConcurrentHashMap<>();
 
     private ToolExecutionObserverRegistry() {
     }
@@ -25,6 +27,15 @@ public final class ToolExecutionObserverRegistry {
         }
     }
 
+    public static void registerApprovalObserver(String agentSessionId, Observer observer) {
+        register(agentSessionId, observer);
+        if (agentSessionId != null && !agentSessionId.isBlank() && observer != null) {
+            APPROVAL_OBSERVERS
+                    .computeIfAbsent(agentSessionId, ignored -> new CopyOnWriteArraySet<>())
+                    .add(observer);
+        }
+    }
+
     public static void unregister(String agentSessionId, Observer observer) {
         if (agentSessionId != null && !agentSessionId.isBlank() && observer != null) {
             CopyOnWriteArraySet<Observer> observers = OBSERVERS.get(agentSessionId);
@@ -32,11 +43,18 @@ public final class ToolExecutionObserverRegistry {
                 observers.remove(observer);
                 if (observers.isEmpty()) OBSERVERS.remove(agentSessionId, observers);
             }
+            CopyOnWriteArraySet<Observer> approvalObservers = APPROVAL_OBSERVERS.get(agentSessionId);
+            if (approvalObservers != null) {
+                approvalObservers.remove(observer);
+                if (approvalObservers.isEmpty()) {
+                    APPROVAL_OBSERVERS.remove(agentSessionId, approvalObservers);
+                }
+            }
         }
     }
 
-    public static boolean hasObserver(String agentSessionId) {
-        CopyOnWriteArraySet<Observer> observers = OBSERVERS.get(agentSessionId);
+    public static boolean hasApprovalObserver(String agentSessionId) {
+        CopyOnWriteArraySet<Observer> observers = APPROVAL_OBSERVERS.get(agentSessionId);
         return observers != null && !observers.isEmpty();
     }
 

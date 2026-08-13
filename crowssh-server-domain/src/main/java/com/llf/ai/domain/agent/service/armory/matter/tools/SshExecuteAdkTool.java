@@ -43,7 +43,7 @@ public class SshExecuteAdkTool {
     // google-adk-spring-ai 1.2.0 转换工具时不会传递 ToolContext，因此由请求线程显式绑定执行资源。
     private static final ThreadLocal<ExecutionBinding> currentExecutionBinding = new ThreadLocal<>();
 
-    // 危险命令模式（需要用户确认），这些命令，也可以设计成配置来使用
+    // 危险命令模式：命中后必须由当前流式会话的用户明确审批。
     private static final Pattern DANGEROUS_PATTERN = Pattern.compile(
             "(?:\\brm\\s+-rf\\s+/|\\bdd\\s+if=|\\bmkfs\\.|:\\(\\)\\s*\\{|>\\s*/dev/sd|\\bchmod\\s+-R\\s+777\\s+/)",
             Pattern.CASE_INSENSITIVE
@@ -195,70 +195,67 @@ public class SshExecuteAdkTool {
                     "AI 对话绑定的服务器与当前 SSH 终端不一致");
         }
 
-        if (DANGEROUS_PATTERN.matcher(safeCommand).find()) {
-            log.warn("[executeCommand] 危险命令被硬性拦截 sessionId={} terminalSessionId={} commandHash={} commandLength={}",
+        boolean approvalRequired = DANGEROUS_PATTERN.matcher(safeCommand).find();
+        if (approvalRequired && !ToolExecutionObserverRegistry.hasApprovalObserver(agentSessionId)) {
+            log.warn("[executeCommand] 危险命令缺少交互审批通道 sessionId={} terminalSessionId={} commandHash={} commandLength={}",
                     agentSessionId, terminalSessionId, commandHash, safeCommand.length());
             return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
-                    "危险命令被硬性拦截。该命令可能导致系统损坏或数据丢失；如确需执行，请手动在终端操作。");
-        }
-
-        if (!ToolExecutionObserverRegistry.hasObserver(agentSessionId)) {
-            return failureResult(toolCallId, agentSessionId, safeCommand, startedAt, "error",
-                    "当前请求不支持交互审批，AI SSH 命令未执行。");
+                    "危险命令需要用户审批，但当前请求不支持交互审批，命令未执行。");
         }
 
         CommandApprovalService.ApprovalTicket approvalTicket = null;
         try {
-            approvalTicket = commandApprovalService.request(
-                    ownerId,
-                    agentSessionId,
-                    terminalSessionId,
-                    connectionId,
-                    toolCallId,
-                    safeCommand);
-            ToolExecutionObserverRegistry.publish(
-                    agentSessionId,
-                    ToolExecutionEvent.approvalRequired(
-                            toolCallId,
-                            "executeCommand",
-                            arguments,
-                            startedAt,
-                            approvalTicket.approvalId(),
-                            approvalTicket.expiresAt(),
-                            approvalTicket.riskLevel()));
+            if (approvalRequired) {
+                approvalTicket = commandApprovalService.request(
+                        ownerId,
+                        agentSessionId,
+                        terminalSessionId,
+                        connectionId,
+                        toolCallId,
+                        safeCommand);
+                ToolExecutionObserverRegistry.publish(
+                        agentSessionId,
+                        ToolExecutionEvent.approvalRequired(
+                                toolCallId,
+                                "executeCommand",
+                                arguments,
+                                startedAt,
+                                approvalTicket.approvalId(),
+                                approvalTicket.riskLevel()));
 
-            CommandApprovalService.Decision decision =
-                    commandApprovalService.awaitDecision(approvalTicket);
-            if (decision != CommandApprovalService.Decision.APPROVED) {
-                String status = decision.name().toLowerCase();
-                String message = switch (decision) {
-                    case DENIED -> "用户已拒绝执行该命令。";
-                    case EXPIRED -> "命令审批已过期，未执行。";
-                    case CANCELLED -> "命令执行已取消。";
-                    default -> "命令未获批准，未执行。";
-                };
-                commandApprovalService.recordExecutionResult(
-                        approvalTicket, status, null, false, 0);
-                return failureResult(
-                        toolCallId, agentSessionId, safeCommand, startedAt, status, message);
+                CommandApprovalService.Decision decision =
+                        commandApprovalService.awaitDecision(approvalTicket);
+                if (decision != CommandApprovalService.Decision.APPROVED) {
+                    String status = decision.name().toLowerCase();
+                    String message = switch (decision) {
+                        case DENIED -> "用户已拒绝执行该命令。";
+                        case CANCELLED -> "命令执行已取消。";
+                        default -> "命令未获批准，未执行。";
+                    };
+                    commandApprovalService.recordExecutionResult(
+                            approvalTicket, status, null, false, 0);
+                    return failureResult(
+                            toolCallId, agentSessionId, safeCommand, startedAt, status, message);
+                }
+                log.info("危险 SSH 命令执行已批准 sessionId={} commandHash={} commandLength={}",
+                        terminalSessionId, commandHash, safeCommand.length());
             }
 
             ToolExecutionObserverRegistry.publish(
                     agentSessionId,
                     ToolExecutionEvent.running(
                             toolCallId, "executeCommand", arguments, startedAt));
-            log.info("SSH 执行已批准 sessionId={} commandHash={} commandLength={}",
-                    terminalSessionId, commandHash, safeCommand.length());
-
             // AI 命令通过隔离执行协议返回真实退出码，避免仅凭输出文本猜测成功与否。
             CommandExecutionResult execution = sshTerminalService.executeCommandWithResult(
                     ownerId, terminalSessionId, safeCommand);
             String output = execution.output();
 
-            if (commandApprovalService.isCancelled(approvalTicket)
+            if ((approvalTicket != null && commandApprovalService.isCancelled(approvalTicket))
                     || Thread.currentThread().isInterrupted()) {
-                commandApprovalService.recordExecutionResult(
-                        approvalTicket, "cancelled", null, false, output.length());
+                if (approvalTicket != null) {
+                    commandApprovalService.recordExecutionResult(
+                            approvalTicket, "cancelled", null, false, output.length());
+                }
                 return failureResult(
                         toolCallId, agentSessionId, safeCommand, startedAt, "cancelled",
                         "命令执行已取消。");
@@ -306,19 +303,21 @@ public class SshExecuteAdkTool {
                             suggestion
                     )
             );
-            commandApprovalService.recordExecutionResult(
-                    approvalTicket,
-                    success ? "success" : "error",
-                    execution.exitCode(),
-                    execution.exitCodeKnown(),
-                    output.length());
+            if (approvalTicket != null) {
+                commandApprovalService.recordExecutionResult(
+                        approvalTicket,
+                        success ? "success" : "error",
+                        execution.exitCode(),
+                        execution.exitCodeKnown(),
+                        output.length());
+            }
 
             return result;
 
         } catch (Exception e) {
-            boolean cancelled = approvalTicket != null
-                    && (commandApprovalService.isCancelled(approvalTicket)
-                    || Thread.currentThread().isInterrupted());
+            boolean cancelled = Thread.currentThread().isInterrupted()
+                    || (approvalTicket != null
+                    && commandApprovalService.isCancelled(approvalTicket));
             String status = cancelled ? "cancelled" : "error";
             log.error("SSH 命令执行异常 session={} commandHash={} commandLength={} status={} exceptionType={}",
                     terminalSessionId, commandHash, safeCommand.length(), status,

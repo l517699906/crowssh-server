@@ -73,6 +73,3 @@ crowssh:
   ssh:
     egress:
       allowed-private-hosts: ${CROWSSH_SSH_ALLOWED_PRIVATE_HOSTS:}
-  ai:
-    command-approval:
-      timeout-seconds: ${CROWSSH_AI_COMMAND_APPROVAL_TIMEOUT_SECONDS:60}

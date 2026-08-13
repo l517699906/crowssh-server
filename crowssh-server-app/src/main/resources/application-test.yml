@@ -4,10 +4,6 @@ server:
 crowssh:
   crypto:
     allow-insecure-development-key: true
-  ai:
-    command-approval:
-      timeout-seconds: 10
-
 # 线程池配置
 thread:
   pool:

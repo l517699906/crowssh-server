@@ -23,10 +23,6 @@ crowssh:
     egress:
       # 生产默认拒绝私网/回环/链路本地地址；仅填入明确的主机或 *.受控域名。
       allowed-private-hosts: ${CROWSSH_SSH_ALLOWED_PRIVATE_HOSTS:}
-  ai:
-    command-approval:
-      timeout-seconds: ${CROWSSH_AI_COMMAND_APPROVAL_TIMEOUT_SECONDS:60}
-
 # 线程池配置
 thread:
   pool:

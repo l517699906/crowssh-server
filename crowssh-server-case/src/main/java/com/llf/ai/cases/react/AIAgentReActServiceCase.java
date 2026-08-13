@@ -40,7 +40,6 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
-    private static final long STREAM_TIMEOUT_MILLIS = 10 * 60 * 1000L;
     private static final long HEARTBEAT_INTERVAL_MILLIS = 15 * 1000L;
     private static final String AGENT_INITIALIZATION_FAILURE_MESSAGE = "智能体初始化失败，请稍后重试。";
     private static final String AGENT_EXECUTION_FAILURE_MESSAGE = "智能体执行失败，请稍后重试。";
@@ -67,7 +66,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
     @Override
     public ResponseBodyEmitter chatStream(ChatRequestDTO requestDTO) {
-        ResponseBodyEmitter emitter = new ResponseBodyEmitter(STREAM_TIMEOUT_MILLIS);
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(0L);
         String registeredSessionId = null;
 
         try {
@@ -149,7 +148,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     cancelStream.run();
                 }
             };
-            ToolExecutionObserverRegistry.register(sessionId, executionObserver);
+            ToolExecutionObserverRegistry.registerApprovalObserver(sessionId, executionObserver);
 
             try (RuntimeChatModelScope ignored = runtimeChatModelService.open(
                     toRuntimeModelConfig(requestDTO.getRuntimeModel()))) {
