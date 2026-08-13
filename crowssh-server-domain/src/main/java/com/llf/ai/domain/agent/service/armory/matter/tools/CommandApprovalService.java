@@ -2,6 +2,7 @@ package com.llf.ai.domain.agent.service.armory.matter.tools;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +31,7 @@ public class CommandApprovalService {
     private final Clock clock;
     private final Map<String, PendingApproval> approvals = new ConcurrentHashMap<>();
 
+    @Autowired
     public CommandApprovalService(
             @Value("${crowssh.ai.command-approval.timeout-seconds:60}") long timeoutSeconds
     ) {

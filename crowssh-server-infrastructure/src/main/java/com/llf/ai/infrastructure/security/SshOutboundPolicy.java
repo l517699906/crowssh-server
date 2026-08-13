@@ -1,6 +1,7 @@
 package com.llf.ai.infrastructure.security;
 
 import com.llf.ai.domain.ssh.adapter.port.SshTargetBlockedException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +32,7 @@ public class SshOutboundPolicy {
     private final List<String> allowedPrivateHosts;
     private final HostResolver resolver;
 
+    @Autowired
     public SshOutboundPolicy(
             @Value("${crowssh.ssh.egress.allowed-private-hosts:}") String allowedPrivateHosts
     ) {

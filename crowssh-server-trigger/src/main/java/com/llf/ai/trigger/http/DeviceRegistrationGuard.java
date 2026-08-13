@@ -1,6 +1,7 @@
 package com.llf.ai.trigger.http;
 
 import com.llf.ai.types.enums.ResponseCode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -31,6 +32,7 @@ public class DeviceRegistrationGuard {
     private final ConcurrentHashMap<String, WindowCounter> counters = new ConcurrentHashMap<>();
     private final AtomicLong attempts = new AtomicLong();
 
+    @Autowired
     public DeviceRegistrationGuard(
             @Value("${crowssh.auth.registration.enabled:true}") boolean enabled,
             @Value("${crowssh.auth.registration.invite-code:}") String inviteCode,

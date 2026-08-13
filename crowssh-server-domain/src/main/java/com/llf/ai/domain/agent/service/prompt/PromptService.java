@@ -83,12 +83,23 @@ public class PromptService implements IPromptService {
 
         // 2. 生成消息前缀
         String prefix = dynamicPromptBuilder.buildMessagePrefix(promptContextVO);
+        String enrichedMessage = prefix.isEmpty()
+                ? userMessage
+                : prefix + "\n---\n" + userMessage;
 
-        if (prefix.isEmpty()) {
-            return userMessage;
-        }
+        // 日志验证点：只记录上下文段是否注入及长度，不记录命令输出或完整 Prompt。
+        log.info("[上下文管理] Prompt 注入: sessionId={}, ownerPresent={}, terminalPresent={}, "
+                        + "[当前任务]={}, [工具执行摘要]={}, historySize={}, prefixLength={}, enrichedLength={}",
+                sessionId,
+                hasText(ownerId),
+                hasText(terminalSessionId),
+                hasText(promptContextVO.getTaskDescription()),
+                hasText(promptContextVO.getToolResultSummary()),
+                messageHistory == null ? 0 : messageHistory.size(),
+                prefix.length(),
+                enrichedMessage == null ? 0 : enrichedMessage.length());
 
-        return prefix + "\n---\n" + userMessage;
+        return enrichedMessage;
     }
 
     /**
@@ -101,5 +112,9 @@ public class PromptService implements IPromptService {
     @Override
     public void clearMilestones(String sessionId) {
         milestoneTracker.clear(sessionId);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }

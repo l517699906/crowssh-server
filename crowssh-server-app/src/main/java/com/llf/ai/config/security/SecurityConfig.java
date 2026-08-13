@@ -33,7 +33,10 @@ public class SecurityConfig {
     private static final Set<String> TAURI_APP_ORIGINS = Set.of(
             "tauri://localhost",
             "http://tauri.localhost",
-            "https://tauri.localhost"
+            "https://tauri.localhost",
+            // Tauri 开发服务器的固定来源；客户端开发/测试构建通过该来源访问后端。
+            "http://localhost:1420",
+            "http://localhost:5173"
     );
 
     @Bean

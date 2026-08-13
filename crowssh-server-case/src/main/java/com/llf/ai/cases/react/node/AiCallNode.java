@@ -311,7 +311,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             promptService.detectAndRecordMilestone(
                     dynamicContext.getSessionId(), "tool", milestoneContent(event));
 
-            // 记录工具执行摘要，供下一轮 Prompt 注入。
+            // 日志验证点：这里是工具事实进入上下文缓存的唯一 ReAct 写入点，下一轮才会注入摘要。
+            log.info("[上下文管理] [工具执行摘要] AiCallNode 写入: sessionId={}, toolName={}, status={}, resultLength={}",
+                    dynamicContext.getSessionId(), event.getToolName(), event.getStatus(), resultContent.length());
             chatContextService.pushToolResult(
                     dynamicContext.getSessionId(), event.getToolName(), resultContent);
         }

@@ -1,6 +1,7 @@
 package com.llf.ai.domain.agent.service.context.provider.impl;
 
 import com.llf.ai.domain.agent.service.context.provider.ContextProvider;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -40,6 +41,7 @@ import java.util.Map;
  * @author llf
  */
 @Component
+@Slf4j
 public class TaskProvider implements ContextProvider {
 
     @Override
@@ -66,7 +68,12 @@ public class TaskProvider implements ContextProvider {
             messageHistory.stream()
                     .filter(m -> "user".equals(m.get("role")))
                     .findFirst()
-                    .ifPresent(m -> result.put("taskDescription", m.get("content")));
+                    .ifPresent(m -> {
+                        Object content = m.get("content");
+                        result.put("taskDescription", content);
+                        log.info("[上下文管理] [当前任务] 已提取: sessionId={}, messageLength={}",
+                                sessionId, content == null ? 0 : content.toString().length());
+                    });
         }
 
         return result;

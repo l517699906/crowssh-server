@@ -7,6 +7,7 @@ import com.llf.ai.domain.agent.service.context.provider.ContextProvider;
 import com.llf.ai.domain.agent.service.context.reducer.impl.HybridReducer;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import java.util.Collections;
 import java.util.Comparator;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.llf.ai.domain.agent.service.context.provider.impl.ToolResultProvider;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 上下文管理领域服务（context 包的聚合核心）
@@ -65,6 +67,7 @@ import com.llf.ai.domain.agent.service.context.provider.impl.ToolResultProvider;
  * @author llf
  */
 @Service
+@Slf4j
 public class ChatContextService implements IChatContextService {
 
     private static final int DEFAULT_MAX_CONTEXT_TOKENS = 8000;
@@ -81,6 +84,15 @@ public class ChatContextService implements IChatContextService {
     public ChatContextService(List<ContextProvider> providers) {
         this.providers = providers;
         this.providers.sort(Comparator.comparingInt(ContextProvider::getOrder));
+    }
+
+    /**
+     * 启动验证点：该日志出现即表示当前运行制品已经包含上下文管理实现。
+     */
+    @PostConstruct
+    public void logContextManagementReady() {
+        log.info("[上下文管理] 组件已加载: providerCount={}, providers={}",
+                providers.size(), providers.stream().map(ContextProvider::getName).toList());
     }
 
     @Override
@@ -119,6 +131,8 @@ public class ChatContextService implements IChatContextService {
     @Override
     public void pushToolResult(String sessionId, String toolName, String result) {
         toolResultProvider.pushResult(sessionId, toolName, result);
+        log.info("[上下文管理] [工具执行摘要] 写入缓存: sessionId={}, toolName={}, resultLength={}",
+                sessionId, toolName, result == null ? 0 : result.length());
     }
 
 }

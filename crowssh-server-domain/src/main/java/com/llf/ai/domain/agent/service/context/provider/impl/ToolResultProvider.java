@@ -3,6 +3,7 @@ package com.llf.ai.domain.agent.service.context.provider.impl;
 import com.llf.ai.domain.agent.service.context.provider.ContextProvider;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -52,6 +53,7 @@ import java.util.stream.Collectors;
  * @author llf
  */
 @Component
+@Slf4j
 public class ToolResultProvider implements ContextProvider {
 
     private final Map<String, List<ToolResultEntry>> results = new ConcurrentHashMap<>();
@@ -77,11 +79,16 @@ public class ToolResultProvider implements ContextProvider {
                                        List<Map<String, Object>> messageHistory) {
         Map<String, Object> result = new HashMap<>();
         List<ToolResultEntry> entries = results.getOrDefault(sessionId, Collections.emptyList());
-        if (entries.isEmpty()) return result;
+        if (entries.isEmpty()) {
+            log.info("[上下文管理] [工具执行摘要] 当前无可注入结果: sessionId={}", sessionId);
+            return result;
+        }
 
         // 懒摘要：有缓存直接返回，否则重新生成
         String summary = summaryCache.computeIfAbsent(sessionId, id -> generateSummary(entries));
         result.put("toolResultSummary", summary);
+        log.info("[上下文管理] [工具执行摘要] 已注入 Prompt: sessionId={}, entryCount={}, summaryLength={}",
+                sessionId, entries.size(), summary.length());
         return result;
     }
 
