@@ -4,15 +4,18 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 在终端内部命令执行期间抑制输出，收到完成序列后恢复透传。
+ * 在终端内部命令执行期间抑制输出，收到完成序列后替换旧提示符并恢复透传。
  */
 final class OneShotTerminalOutputFilter {
+
+    private static final byte[] REPLACE_CURRENT_LINE = "\r\u001B[2K".getBytes(StandardCharsets.UTF_8);
 
     private final byte[] completionSequence;
     private final int[] longestPrefixSuffix;
 
     private int matchedLength;
-    private volatile boolean filtering = true;
+    private boolean filtering = true;
+    private boolean suppressedOutput;
     private volatile boolean complete;
 
     OneShotTerminalOutputFilter(String completionSequence) {
@@ -20,7 +23,7 @@ final class OneShotTerminalOutputFilter {
         this.longestPrefixSuffix = buildLongestPrefixSuffix(this.completionSequence);
     }
 
-    byte[] filter(byte[] bytes, int offset, int length) {
+    synchronized byte[] filter(byte[] bytes, int offset, int length) {
         if (bytes == null || length <= 0 || completionSequence.length == 0) {
             return new byte[0];
         }
@@ -32,8 +35,9 @@ final class OneShotTerminalOutputFilter {
             passthrough.write(bytes, start, end - start);
             return passthrough.toByteArray();
         }
+        suppressedOutput = true;
 
-        ByteArrayOutputStream visible = new ByteArrayOutputStream(end - start);
+        ByteArrayOutputStream visible = new ByteArrayOutputStream(end - start + REPLACE_CURRENT_LINE.length);
         for (int index = start; index < end; index++) {
             if (!filtering) {
                 visible.write(bytes, index, end - index);
@@ -49,6 +53,8 @@ final class OneShotTerminalOutputFilter {
                 if (matchedLength == completionSequence.length) {
                     matchedLength = 0;
                     complete = true;
+                    filtering = false;
+                    visible.write(REPLACE_CURRENT_LINE, 0, REPLACE_CURRENT_LINE.length);
                 }
             }
         }
@@ -59,8 +65,13 @@ final class OneShotTerminalOutputFilter {
         return complete;
     }
 
-    void release() {
+    synchronized boolean release() {
         filtering = false;
+        return complete;
+    }
+
+    synchronized boolean hasSuppressedOutput() {
+        return suppressedOutput;
     }
 
     private int[] buildLongestPrefixSuffix(byte[] pattern) {

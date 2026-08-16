@@ -36,7 +36,6 @@ public class TerminalSessionPort implements ITerminalSessionPort {
     private static final long COMMAND_CANCEL_GRACE_MS = 2000;
     private static final long OUTPUT_DRAIN_TIMEOUT_MS = 2000;
     private static final long SHELL_INTEGRATION_READY_TIMEOUT_MS = 2000;
-    private static final long SHELL_INTEGRATION_OUTPUT_SETTLE_MS = 200;
     private static final String WORKING_DIRECTORY_SHELL_INTEGRATION_READY_SEQUENCE =
             "\u001B]777;crowssh-shell-integration-ready\u0007";
     private static final String WORKING_DIRECTORY_SHELL_INTEGRATION =
@@ -120,7 +119,7 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                     new OneShotTerminalOutputFilter(WORKING_DIRECTORY_SHELL_INTEGRATION_READY_SEQUENCE);
             shellIntegrationOutputFilters.put(sessionId, outputFilter);
             installWorkingDirectoryTracking(sessionId, out);
-            waitForShellIntegrationReady(sessionId, outputFilter);
+            waitForShellIntegrationReady(sessionId, outputFilter, out);
 
             log.info("终端会话打开成功 sessionId={} connectionId={}", sessionId, connectionId);
             return sessionId;
@@ -486,22 +485,34 @@ public class TerminalSessionPort implements ITerminalSessionPort {
 
     private void waitForShellIntegrationReady(
             String sessionId,
-            OneShotTerminalOutputFilter outputFilter) {
+            OneShotTerminalOutputFilter outputFilter,
+            OutputStream output) {
         long waitDeadline = System.currentTimeMillis() + SHELL_INTEGRATION_READY_TIMEOUT_MS;
         try {
             while (System.currentTimeMillis() < waitDeadline && !outputFilter.isComplete()) {
                 Thread.sleep(10);
             }
-            if (outputFilter.isComplete()) {
-                Thread.sleep(SHELL_INTEGRATION_OUTPUT_SETTLE_MS);
-            }
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         }
 
-        outputFilter.release();
-        if (!outputFilter.isComplete()) {
+        boolean ready = outputFilter.release();
+        boolean promptMayHaveBeenSuppressed = !ready && outputFilter.hasSuppressedOutput();
+        shellIntegrationOutputFilters.remove(sessionId, outputFilter);
+        if (!ready) {
             log.warn("终端 Shell 集成安装确认超时，已恢复输出 sessionId={}", sessionId);
+            if (promptMayHaveBeenSuppressed) {
+                requestShellPromptRedraw(sessionId, output);
+            }
+        }
+    }
+
+    private void requestShellPromptRedraw(String sessionId, OutputStream output) {
+        try {
+            output.write('\r');
+            output.flush();
+        } catch (IOException e) {
+            log.warn("终端 Shell 集成超时后提示符重绘失败 sessionId={} reason={}", sessionId, e.getMessage());
         }
     }
 
