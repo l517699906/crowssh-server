@@ -3,13 +3,14 @@ package com.llf.ai.domain.agent.service.armory.node;
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.plugins.BasePlugin;
-import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.runner.Runner;
 import com.google.common.collect.ImmutableList;
 import com.llf.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.llf.ai.domain.agent.service.armory.AbstractArmorySupport;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
+import com.llf.ai.domain.agent.service.armory.matter.session.ManagedRunnerFactory;
 import com.llf.ai.types.enums.ResponseCode;
 import com.llf.ai.types.exception.AppException;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +30,13 @@ import java.util.List;
 @Slf4j
 @Service
 public class RunnerNode extends AbstractArmorySupport {
+
+    private final ManagedRunnerFactory managedRunnerFactory;
+
+    public RunnerNode(ManagedRunnerFactory managedRunnerFactory) {
+        this.managedRunnerFactory = managedRunnerFactory;
+    }
+
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
         log.info("Ai Agent 装配操作 - RunnerNode");
@@ -42,7 +50,7 @@ public class RunnerNode extends AbstractArmorySupport {
         String agentDesc = agent.getAgentDesc();
 
         // Runner 运行体
-        InMemoryRunner runner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
+        Runner runner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
 
         // 构建注册对象
         AiAgentRegisterVO aiAgentRegisterVO = AiAgentRegisterVO.builder()
@@ -59,7 +67,7 @@ public class RunnerNode extends AbstractArmorySupport {
         return aiAgentRegisterVO;
     }
 
-    private InMemoryRunner getRunner(DefaultArmoryFactory.DynamicContext dynamicContext, AiAgentConfigTableVO aiAgentConfigTableVO, String appName) {
+    private Runner getRunner(DefaultArmoryFactory.DynamicContext dynamicContext, AiAgentConfigTableVO aiAgentConfigTableVO, String appName) {
         AiAgentConfigTableVO.Module.Runner runnerConfig = aiAgentConfigTableVO.getModule().getRunner();
 
         String agentName = runnerConfig.getAgentName();
@@ -85,7 +93,7 @@ public class RunnerNode extends AbstractArmorySupport {
         }
 
         // 会话运行节点
-        return new InMemoryRunner(baseAgent, appName, plugins);
+        return managedRunnerFactory.create(baseAgent, appName, plugins);
     }
 
     @Override

@@ -70,6 +70,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         // 2. 重置当前轮次缓冲
         dynamicContext.resetRoundBuffers();
+        dynamicContext.resetRoundToolCalls();
 
         // 3. 裁剪消息历史（优先级 + 滑动窗口混合策略，8000 token 预算） - 这部分也可以作为配置，根据模型不同来调整。
         List<Map<String, Object>> trimmedHistory = chatContextService.trimHistory(dynamicContext.getMessageHistory(), 8000);
@@ -94,17 +95,17 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         // 7. 通过领域服务调用 ADK Runner，保留会话和 SSH 资源归属校验
         StringBuilder textAccumulator = new StringBuilder();
-        int roundToolCalls = 0;
         boolean hasError = false;
 
         log.info("调用 ADK Runner，用户消息长度: {}", lastUserMessage.length());
 
         try {
-            Iterator<Event> events = chatService.handleMessageStream(
+            Iterator<Event> events = chatService.handleEnrichedMessageStream(
                     dynamicContext.getAgentId(),
                     dynamicContext.getUserId(),
                     dynamicContext.getSessionId(),
                     enrichedMessage,
+                    lastUserMessage,
                     terminalSessionId,
                     requestParameter.getConnectionId()
             ).blockingIterable().iterator();
@@ -145,15 +146,13 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             SshExecuteAdkTool.clearCurrentTerminalSession();
         }
 
-        roundToolCalls = processCompletedToolEvents(dynamicContext);
+        int roundToolCalls = processCompletedToolEvents(dynamicContext);
         publishReconciledText(dynamicContext, textAccumulator, hasError);
 
         // 8. 更新步数和工具调用统计
         dynamicContext.incrementStep();
         dynamicContext.getResult().setTotalSteps(dynamicContext.getStep());
-        dynamicContext.getResult().setTotalToolCalls(
-                dynamicContext.getResult().getTotalToolCalls() + roundToolCalls
-        );
+        dynamicContext.getResult().setTotalToolCalls(dynamicContext.getTotalToolCallCount().get());
 
         log.info("ReAct AiCallNode - 第 {} 步完成，本轮工具调用 {} 次，文本长度 {}",
                 dynamicContext.getStep(), roundToolCalls, textAccumulator.length());
@@ -164,7 +163,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 dynamicContext.getStep(),
                 dynamicContext.getMaxSteps(),
                 !hasError,
-                dynamicContext.getResult().getTotalToolCalls()
+                dynamicContext.getTotalToolCallCount().get()
         );
 
         // 10. 错误处理
@@ -295,6 +294,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             toolCallInfo.put("name", event.getToolName());
             toolCallInfo.put("args", formatValue(event.getArguments()));
             dynamicContext.getCurrentToolCalls().add(toolCallInfo);
+            dynamicContext.getExecutedToolCalls().add(toolCallInfo);
 
             Map<String, Object> toolResultInfo = new LinkedHashMap<>();
             toolResultInfo.put("id", event.getToolCallId());
@@ -302,8 +302,10 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             toolResultInfo.put("content", resultContent);
             toolResultInfo.put("status", event.getStatus());
             dynamicContext.getCurrentToolResults().add(toolResultInfo);
+            dynamicContext.getExecutedToolResults().add(toolResultInfo);
 
             dynamicContext.incrementTotalToolCalls();
+            dynamicContext.incrementRoundToolCalls();
             if ("executeCommand".equals(event.getToolName())) {
                 dynamicContext.addRecentCommand(event.getCommand());
             }

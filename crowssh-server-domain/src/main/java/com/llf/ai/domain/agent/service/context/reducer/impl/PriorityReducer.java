@@ -1,14 +1,12 @@
 package com.llf.ai.domain.agent.service.context.reducer.impl;
 
 import com.llf.ai.domain.agent.service.context.reducer.MessageReducer;
-import lombok.AllArgsConstructor;
-import lombok.Data;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * 优先级裁剪器
@@ -27,17 +25,16 @@ import java.util.stream.Collectors;
  * </pre>
  * 运行过程：
  * <pre>
- *   messages --> 逐条推断优先级 PrioritizedMessage(msg, priority)
+ *   messages --> 按工具调用/结果关系构造完整消息组
  *        |
  *        v
- *   保底：先无条件保留最近 2 条
+ *   取组内最高优先级，并按优先级、时间倒序排序
  *        |
  *        v
- *   从旧到新（倒数第3条 -> 第1条）尝试回填：
- *        usedTokens + msgTokens <= 预算 ? 加入头部 : 丢弃
+ *   usedTokens + groupTokens <= 预算 ? 保留整组 : 丢弃整组
  *        |
  *        v
- *   返回 kept（保持时间正序）
+ *   返回 kept（完整消息组，保持时间正序）
  * </pre>
  *
  * @author llf
@@ -47,36 +44,50 @@ public class PriorityReducer implements MessageReducer {
 
     @Override
     public List<Map<String, Object>> reduce(List<Map<String, Object>> messages, int tokenBudget) {
-        // 为每条消息推断优先级
-        List<PrioritizedMessage> prioritized = messages.stream()
-            .map(m -> new PrioritizedMessage(m, inferPriority(m)))
-            .collect(Collectors.toList());
+        if (messages == null || messages.isEmpty() || tokenBudget <= 0) {
+            return List.of();
+        }
 
-        // 至少保留最近 2 条
-        int minKeep = Math.min(2, prioritized.size());
-        List<PrioritizedMessage> kept = new ArrayList<>(prioritized.subList(
-            prioritized.size() - minKeep, prioritized.size()));
+        List<MessageGroupSupport.MessageGroup> candidates = new ArrayList<>(
+                MessageGroupSupport.group(messages));
+        candidates.sort(Comparator
+                .comparingInt(this::priorityWeight)
+                .reversed()
+                .thenComparing(
+                        Comparator.comparingInt(MessageGroupSupport.MessageGroup::startIndex)
+                                .reversed()));
 
-        // 从低优先级开始丢弃，直到满足 token 预算
-        int usedTokens = estimateTokens(kept);
-        for (int i = prioritized.size() - minKeep - 1; i >= 0; i--) {
-            PrioritizedMessage pm = prioritized.get(i);
-            int msgTokens = estimateToken(pm.getMessage());
-            if (usedTokens + msgTokens <= tokenBudget) {
-                kept.add(0, pm);
-                usedTokens += msgTokens;
+        List<MessageGroupSupport.MessageGroup> kept = new ArrayList<>();
+        int usedTokens = 0;
+        for (MessageGroupSupport.MessageGroup group : candidates) {
+            int groupTokens = MessageGroupSupport.estimateTokens(group);
+            if (usedTokens + groupTokens <= tokenBudget) {
+                kept.add(group);
+                usedTokens += groupTokens;
             }
         }
 
-        return kept.stream().map(PrioritizedMessage::getMessage).collect(Collectors.toList());
+        return MessageGroupSupport.flatten(kept);
+    }
+
+    int priorityWeight(MessageGroupSupport.MessageGroup group) {
+        return group.messages().stream()
+                .map(this::inferPriority)
+                .mapToInt(Priority::weight)
+                .max()
+                .orElse(Priority.MEDIUM.weight());
     }
 
     private Priority inferPriority(Map<String, Object> message) {
-        String role = (String) message.get("role");
-        String content = String.valueOf(message.get("content"));
+        String role = stringValue(message.get("role"));
+        String content = MessageGroupSupport.contentText(message);
 
-        if ("tool".equals(role) && containsAny(content, "error", "failed", "exception", "permission denied")) {
+        if (MessageGroupSupport.isToolResult(message)
+                && containsAny(content, "error", "failed", "exception", "permission denied")) {
             return Priority.CRITICAL;
+        }
+        if (MessageGroupSupport.isToolCallAssistant(message)) {
+            return Priority.HIGH;
         }
         if ("user".equals(role) && containsAny(content, "/", ".conf", ".yml", ".properties")) {
             return Priority.HIGH;
@@ -99,23 +110,25 @@ public class PriorityReducer implements MessageReducer {
         return false;
     }
 
-    private int estimateToken(Map<String, Object> message) {
-        String content = String.valueOf(message.get("content"));
-        // 粗略估算：每 2 个字符 1 个 token
-        return content != null ? content.length() / 2 : 0;
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
-    private int estimateTokens(List<PrioritizedMessage> messages) {
-        return messages.stream().mapToInt(m -> estimateToken(m.getMessage())).sum();
-    }
+    private enum Priority {
+        CRITICAL(100),
+        HIGH(80),
+        MEDIUM(50),
+        LOW(20);
 
-    @Data
-    @AllArgsConstructor
-    private static class PrioritizedMessage {
-        private Map<String, Object> message;
-        private Priority priority;
-    }
+        private final int weight;
 
-    enum Priority { CRITICAL, HIGH, MEDIUM, LOW }
+        Priority(int weight) {
+            this.weight = weight;
+        }
+
+        int weight() {
+            return weight;
+        }
+    }
 
 }

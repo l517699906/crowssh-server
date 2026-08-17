@@ -56,4 +56,11 @@ public interface IChatContextService {
      * @param result    执行结果
      */
     void pushToolResult(String sessionId, String toolName, String result);
+
+    /**
+     * 清理已经失效或被删除会话的上下文缓存。
+     *
+     * @param sessionId 对话会话 ID
+     */
+    void clearSessionContext(String sessionId);
 }

@@ -3,9 +3,9 @@ package com.llf.ai.domain.agent.service.context.reducer.impl;
 import com.llf.ai.domain.agent.service.context.reducer.MessageReducer;
 import org.springframework.stereotype.Component;
 
-import jakarta.annotation.Resource;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -14,9 +14,8 @@ import java.util.Set;
  * 混合裁剪器（ChatContextService 实际使用的裁剪策略）
  * <p>
  * 功能：组合两种裁剪器的优点——PriorityReducer 保证"重要的不丢"，
- * SlidingWindowReducer 保证"新的不丢"，取两者保留结果的交集，
- * 再强制保底最近 2 条。交集策略比任一单策略更严格，
- * 最终结果一定同时满足两种约束。
+ * SlidingWindowReducer 保证"新的不丢"。先合并完整消息组候选，再执行一次
+ * 统一 token 预算，避免两个子策略的并集突破总预算。
  * <p>
  * 运行过程：
  * <pre>
@@ -25,58 +24,76 @@ import java.util.Set;
  *              +--> SlidingWindowReducer.reduce() --> 保留集合 B（按时效）
  *                          |
  *                          v
- *                  keep = A ∩ B（交集，双重约束）
+ *                  candidates = A ∪ B + 最近 2 个完整消息组
  *                          |
  *                          v
- *                  保底：强制加入最近 2 条的索引
+ *                  按最近性、重要性、时间倒序选择
  *                          |
  *                          v
- *                  按原顺序输出保留的消息
+ *                  在统一预算内按原顺序输出完整消息组
  * </pre>
- * 注：indexSet 通过 all.indexOf(msg) 把消息对象映射回原列表下标，
- * 依赖 Map 的 equals 比较内容，内容相同的消息可能定位到首个匹配项，
- * 对裁剪结果无实质影响（内容相同裁谁都一样）。
  *
  * @author llf
  */
 @Component
 public class HybridReducer implements MessageReducer {
 
-    @Resource
-    private PriorityReducer priorityReducer;
+    private final PriorityReducer priorityReducer;
+    private final SlidingWindowReducer slidingReducer;
 
-    @Resource
-    private SlidingWindowReducer slidingReducer;
+    public HybridReducer(
+            PriorityReducer priorityReducer,
+            SlidingWindowReducer slidingReducer
+    ) {
+        this.priorityReducer = priorityReducer;
+        this.slidingReducer = slidingReducer;
+    }
 
     @Override
     public List<Map<String, Object>> reduce(List<Map<String, Object>> messages, int tokenBudget) {
-        Set<Integer> priorityKeep = indexSet(priorityReducer.reduce(messages, tokenBudget), messages);
-        Set<Integer> slidingKeep  = indexSet(slidingReducer.reduce(messages, tokenBudget), messages);
-
-        // 取交集
-        Set<Integer> keepIndices = new HashSet<>(priorityKeep);
-        keepIndices.retainAll(slidingKeep);
-
-        // 保证至少有最近 2 条
-        int minKeep = Math.min(2, messages.size());
-        for (int i = messages.size() - minKeep; i < messages.size(); i++) {
-            keepIndices.add(i);
+        if (messages == null || messages.isEmpty() || tokenBudget <= 0) {
+            return List.of();
         }
 
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (int i = 0; i < messages.size(); i++) {
-            if (keepIndices.contains(i)) result.add(messages.get(i));
-        }
-        return result;
-    }
+        List<MessageGroupSupport.MessageGroup> groups = MessageGroupSupport.group(messages);
+        Set<Integer> candidateStarts = new LinkedHashSet<>();
+        candidateStarts.addAll(MessageGroupSupport.groupStartsForSubset(
+                priorityReducer.reduce(messages, tokenBudget), groups));
+        candidateStarts.addAll(MessageGroupSupport.groupStartsForSubset(
+                slidingReducer.reduce(messages, tokenBudget), groups));
 
-    private Set<Integer> indexSet(List<Map<String, Object>> subset, List<Map<String, Object>> all) {
-        Set<Integer> indices = new HashSet<>();
-        for (Map<String, Object> msg : subset) {
-            int idx = all.indexOf(msg);
-            if (idx >= 0) indices.add(idx);
+        Set<Integer> recentStarts = new LinkedHashSet<>();
+        int recentGroupCount = Math.min(2, groups.size());
+        for (int i = groups.size() - recentGroupCount; i < groups.size(); i++) {
+            int startIndex = groups.get(i).startIndex();
+            recentStarts.add(startIndex);
+            candidateStarts.add(startIndex);
         }
-        return indices;
+
+        List<MessageGroupSupport.MessageGroup> candidates = groups.stream()
+                .filter(group -> candidateStarts.contains(group.startIndex()))
+                .sorted(Comparator
+                        .comparing((MessageGroupSupport.MessageGroup group) ->
+                                recentStarts.contains(group.startIndex()))
+                        .reversed()
+                        .thenComparing(
+                                Comparator.comparingInt(priorityReducer::priorityWeight)
+                                        .reversed())
+                        .thenComparing(
+                                Comparator.comparingInt(MessageGroupSupport.MessageGroup::startIndex)
+                                        .reversed()))
+                .toList();
+
+        List<MessageGroupSupport.MessageGroup> kept = new ArrayList<>();
+        int usedTokens = 0;
+        for (MessageGroupSupport.MessageGroup group : candidates) {
+            int groupTokens = MessageGroupSupport.estimateTokens(group);
+            if (usedTokens + groupTokens <= tokenBudget) {
+                kept.add(group);
+                usedTokens += groupTokens;
+            }
+        }
+        return MessageGroupSupport.flatten(kept);
     }
 
 }

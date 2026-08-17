@@ -103,6 +103,19 @@ public interface IChatService {
     );
 
     /**
+     * 使用富化消息执行本轮模型调用，但在会话历史中保留未经富化的原始用户消息。
+     */
+    Flowable<Event> handleEnrichedMessageStream(
+            String agentId,
+            String userId,
+            String sessionId,
+            String enrichedMessage,
+            String originalMessage,
+            String terminalSessionId,
+            String connectionId
+    );
+
+    /**
      * 处理消息（流式）
      * @param chatCommandEntity 对话命令对象
      * @return 事件流

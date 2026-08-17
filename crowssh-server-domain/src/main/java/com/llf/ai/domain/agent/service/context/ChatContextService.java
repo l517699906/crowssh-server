@@ -34,7 +34,7 @@ import lombok.extern.slf4j.Slf4j;
  *        | (1) trimHistory(history, 8000)
  *        |        |
  *        |        v
- *        |     HybridReducer = PriorityReducer ∩ SlidingWindowReducer + 保底2条
+ *        |     HybridReducer = 两类候选完整消息组 + 统一 token 预算
  *        |        |
  *        |        v
  *        |     裁剪后的历史回写 DynamicContext
@@ -133,6 +133,12 @@ public class ChatContextService implements IChatContextService {
         toolResultProvider.pushResult(sessionId, toolName, result);
         log.info("[上下文管理] [工具执行摘要] 写入缓存: sessionId={}, toolName={}, resultLength={}",
                 sessionId, toolName, result == null ? 0 : result.length());
+    }
+
+    @Override
+    public void clearSessionContext(String sessionId) {
+        toolResultProvider.clear(sessionId);
+        log.info("[上下文管理] 已清理失效会话缓存: sessionId={}", sessionId);
     }
 
 }

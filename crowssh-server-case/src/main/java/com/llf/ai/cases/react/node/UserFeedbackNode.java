@@ -76,13 +76,13 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
         return ReActResultDTO.builder()
                 .content(fullText)
                 .totalSteps(dynamicContext.getStep())
-                .totalToolCalls(dynamicContext.getResult() != null ? dynamicContext.getResult().getTotalToolCalls() : 0)
+                .totalToolCalls(dynamicContext.getTotalToolCallCount().get())
                 .maxStepsReached("max_steps".equals(stopReason))
                 .userStopped("user_stop".equals(stopReason))
                 .idleTimeout("idle_timeout".equals(stopReason))
                 .stopReason(stopReason)
-                .toolCalls(dynamicContext.getCurrentToolCalls())
-                .toolResults(dynamicContext.getCurrentToolResults())
+                .toolCalls(dynamicContext.getExecutedToolCalls())
+                .toolResults(dynamicContext.getExecutedToolResults())
                 .error(dynamicContext.getErrorMessage())
                 .build();
     }

@@ -56,6 +56,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ToolResultProvider implements ContextProvider {
 
+    private static final int MAX_RESULTS_PER_SESSION = 50;
+
     private final Map<String, List<ToolResultEntry>> results = new ConcurrentHashMap<>();
     private final Map<String, String> summaryCache = new ConcurrentHashMap<>();
 
@@ -93,9 +95,23 @@ public class ToolResultProvider implements ContextProvider {
     }
 
     public void pushResult(String sessionId, String toolName, String result) {
-        results.computeIfAbsent(sessionId, k -> new CopyOnWriteArrayList<>())
-                .add(new ToolResultEntry(toolName, result));
+        List<ToolResultEntry> entries = results.computeIfAbsent(
+                sessionId, k -> new CopyOnWriteArrayList<>());
+        synchronized (entries) {
+            entries.add(new ToolResultEntry(toolName, result));
+            while (entries.size() > MAX_RESULTS_PER_SESSION) {
+                entries.remove(0);
+            }
+        }
         summaryCache.remove(sessionId);  // 失效摘要缓存
+    }
+
+    public void clear(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        results.remove(sessionId);
+        summaryCache.remove(sessionId);
     }
 
     private String generateSummary(List<ToolResultEntry> entries) {

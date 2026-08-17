@@ -62,7 +62,11 @@ public class RootNode extends AbstractAIAgentReActSupport {
         dynamicContext.setMessageHistory(new java.util.ArrayList<>());
         dynamicContext.setCurrentToolCalls(new java.util.ArrayList<>());
         dynamicContext.setCurrentToolResults(new java.util.ArrayList<>());
+        dynamicContext.setExecutedToolCalls(new java.util.ArrayList<>());
+        dynamicContext.setExecutedToolResults(new java.util.ArrayList<>());
         dynamicContext.setCurrentStep(new AtomicInteger(0));
+        dynamicContext.setTotalToolCallCount(new AtomicInteger(0));
+        dynamicContext.setRoundToolCallCount(new AtomicInteger(0));
         dynamicContext.setMaxSteps(DEFAULT_MAX_STEPS);
         dynamicContext.setMaxToolCalls(DEFAULT_MAX_TOOL_CALLS);
         dynamicContext.setMaxToolCallsPerRound(DEFAULT_MAX_TOOL_CALLS_PER_ROUND);

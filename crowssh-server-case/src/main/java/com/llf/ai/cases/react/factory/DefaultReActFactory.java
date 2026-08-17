@@ -92,16 +92,28 @@ public class DefaultReActFactory {
         private List<Map<String, Object>> messageHistory = new ArrayList<>();
 
         /**
-         * 当前轮次的工具调用列表
+         * 当前轮次的工具调用列表（缓冲）
          */
         @Builder.Default
         private List<Map<String, Object>> currentToolCalls = new ArrayList<>();
 
         /**
-         * 当前轮次的工具执行结果列表
+         * 当前轮次的工具执行结果列表（缓冲）
          */
         @Builder.Default
         private List<Map<String, Object>> currentToolResults = new ArrayList<>();
+
+        /**
+         * 整个会话中实际执行的工具调用记录（供最终结果展示）
+         */
+        @Builder.Default
+        private List<Map<String, Object>> executedToolCalls = new ArrayList<>();
+
+        /**
+         * 整个会话中实际得到的工具执行结果（供最终结果展示）
+         */
+        @Builder.Default
+        private List<Map<String, Object>> executedToolResults = new ArrayList<>();
 
         /** 当前轮由真实工具边界发布的执行事件 */
         @Builder.Default
@@ -124,7 +136,7 @@ public class DefaultReActFactory {
         /** 每轮最大工具调用次数 */
         private int maxToolCallsPerRound;
 
-        /** 总工具调用次数 */
+        /** 总工具调用次数（唯一统计真值源） */
         @Builder.Default
         private AtomicInteger totalToolCallCount = new AtomicInteger(0);
 
