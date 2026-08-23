@@ -11,7 +11,6 @@ import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 /**
  * SSH 命令执行 ADK 工具，为智能体提供在 SSH 终端执行命令的能力
@@ -43,11 +42,9 @@ public class SshExecuteAdkTool {
     // google-adk-spring-ai 1.2.0 转换工具时不会传递 ToolContext，因此由请求线程显式绑定执行资源。
     private static final ThreadLocal<ExecutionBinding> currentExecutionBinding = new ThreadLocal<>();
 
-    // 危险命令模式：命中后必须由当前流式会话的用户明确审批。
-    private static final Pattern DANGEROUS_PATTERN = Pattern.compile(
-            "(?:\\brm\\s+-rf\\s+/|\\bdd\\s+if=|\\bmkfs\\.|:\\(\\)\\s*\\{|>\\s*/dev/sd|\\bchmod\\s+-R\\s+777\\s+/)",
-            Pattern.CASE_INSENSITIVE
-    );
+    // 危险命令检测：命中后必须由当前流式会话的用户明确审批。
+    private static final DangerousCommandDetector DANGEROUS_COMMAND_DETECTOR =
+            new DangerousCommandDetector();
 
     /**
      * 设置当前线程的终端会话 ID（兼容旧接口）
@@ -195,7 +192,7 @@ public class SshExecuteAdkTool {
                     "AI 对话绑定的服务器与当前 SSH 终端不一致");
         }
 
-        boolean approvalRequired = DANGEROUS_PATTERN.matcher(safeCommand).find();
+        boolean approvalRequired = DANGEROUS_COMMAND_DETECTOR.isDangerous(safeCommand);
         if (approvalRequired && !ToolExecutionObserverRegistry.hasApprovalObserver(agentSessionId)) {
             log.warn("[executeCommand] 危险命令缺少交互审批通道 sessionId={} terminalSessionId={} commandHash={} commandLength={}",
                     agentSessionId, terminalSessionId, commandHash, safeCommand.length());

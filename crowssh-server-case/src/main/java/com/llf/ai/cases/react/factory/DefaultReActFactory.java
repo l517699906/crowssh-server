@@ -169,6 +169,12 @@ public class DefaultReActFactory {
         /** 错误消息（如有） */
         private String errorMessage;
 
+        /** ReAct 循环墙钟起点（epoch millis），由 RootNode 播种。 */
+        private long loopStartEpochMilli;
+
+        /** 墙钟超时阈值（毫秒），<=0 表示不启用。 */
+        private long wallClockTimeoutMillis;
+
         // ══════════════════════════════════════════════════════════
         //  结果对象（供 UserFeedbackNode 使用）
         // ══════════════════════════════════════════════════════════

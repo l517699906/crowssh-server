@@ -1,3 +1,12 @@
+map $http_origin $crowssh_desktop_cors_origin {
+    default "";
+    "tauri://localhost" $http_origin;
+    "http://tauri.localhost" $http_origin;
+    "https://tauri.localhost" $http_origin;
+    "http://localhost:1420" $http_origin;
+    "http://localhost:5173" $http_origin;
+}
+
 server {
     listen 80;
     listen [::]:80;
@@ -20,7 +29,8 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
 
-    client_max_body_size 1g;
+    client_max_body_size 1025m;
+    error_page 413 = @crowssh_payload_too_large;
 
     location /api/ {
         proxy_pass http://127.0.0.1:8091;
@@ -30,9 +40,18 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
         proxy_buffering off;
+        proxy_request_buffering off;
         proxy_cache off;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
+    }
+
+    location @crowssh_payload_too_large {
+        default_type application/json;
+        charset utf-8;
+        add_header Access-Control-Allow-Origin $crowssh_desktop_cors_origin always;
+        add_header Vary "Origin" always;
+        return 413 '{"code":"PAYLOAD_TOO_LARGE","info":"上传失败：文件大小超过 1 GB 限制","data":null}';
     }
 
     # 生产模板只暴露 CrowSSH API；docs 下的静态演示页不得作为认证入口部署。

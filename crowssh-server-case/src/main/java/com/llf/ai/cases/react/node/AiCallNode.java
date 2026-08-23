@@ -6,6 +6,7 @@ import com.google.genai.types.Content;
 import com.llf.ai.api.dto.ChatRequestDTO;
 import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
+import com.llf.ai.cases.react.config.ReActProperties;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.cases.react.guard.ToolResultConsistencyGuard;
 import com.llf.ai.domain.agent.service.IChatContextService;
@@ -61,6 +62,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     @Resource
     private ToolResultConsistencyGuard toolResultConsistencyGuard;
 
+    @Resource
+    private ReActProperties reactProperties;
+
     @Override
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
         log.info("ReAct AiCallNode - 开始 AI 调用，第 {} 步", dynamicContext.getStep() + 1);
@@ -72,8 +76,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         dynamicContext.resetRoundBuffers();
         dynamicContext.resetRoundToolCalls();
 
-        // 3. 裁剪消息历史（优先级 + 滑动窗口混合策略，8000 token 预算） - 这部分也可以作为配置，根据模型不同来调整。
-        List<Map<String, Object>> trimmedHistory = chatContextService.trimHistory(dynamicContext.getMessageHistory(), 8000);
+        // 3. 裁剪消息历史（优先级 + 滑动窗口混合策略，token 预算来自配置 crowssh.react.token-budget）
+        List<Map<String, Object>> trimmedHistory = trimHistory(dynamicContext);
         dynamicContext.setMessageHistory(new ArrayList<>(trimmedHistory));
 
         // 4. 显式绑定工具执行上下文。Spring AI 适配层不会向 ADK 工具传递 ToolContext。
@@ -209,6 +213,14 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     // ═══════════════════════════════════════════════════════════════
     //  辅助方法
     // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * 按配置的 token 预算裁剪消息历史。抽为包级 seam 以便单测直接驱动。
+     */
+    List<Map<String, Object>> trimHistory(DefaultReActFactory.DynamicContext dynamicContext) {
+        return chatContextService.trimHistory(
+                dynamicContext.getMessageHistory(), reactProperties.getTokenBudget());
+    }
 
     /**
      * 获取最新用户消息

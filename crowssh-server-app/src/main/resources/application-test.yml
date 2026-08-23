@@ -4,6 +4,20 @@ server:
 crowssh:
   crypto:
     allow-insecure-development-key: true
+  session:
+    idle-timeout-millis: 1800000
+    reap-interval-ms: 60000
+    max-sessions-per-owner: 10
+  react:
+    max-steps: 50
+    max-tool-calls: 200
+    max-tool-calls-per-round: 10
+    token-budget: 8000
+    wall-clock-timeout-millis: 600000
+  # SSE 流式执行器：并发上限（背压）/ 心跳线程数
+  sse:
+    max-concurrent-streams: 50
+    heartbeat-pool-size: 2
 # 线程池配置
 thread:
   pool:

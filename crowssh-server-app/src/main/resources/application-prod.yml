@@ -23,6 +23,22 @@ crowssh:
     egress:
       # 生产默认拒绝私网/回环/链路本地地址；仅填入明确的主机或 *.受控域名。
       allowed-private-hosts: ${CROWSSH_SSH_ALLOWED_PRIVATE_HOSTS:}
+  # 终端会话治理：空闲 TTL / 回收周期 / 单用户配额
+  session:
+    idle-timeout-millis: ${CROWSSH_SESSION_IDLE_TIMEOUT_MILLIS:1800000}
+    reap-interval-ms: ${CROWSSH_SESSION_REAP_INTERVAL_MS:60000}
+    max-sessions-per-owner: ${CROWSSH_SESSION_MAX_PER_OWNER:10}
+  # ReAct 循环护栏：步数 / 工具调用 / token 预算 / 墙钟超时
+  react:
+    max-steps: ${CROWSSH_REACT_MAX_STEPS:50}
+    max-tool-calls: ${CROWSSH_REACT_MAX_TOOL_CALLS:200}
+    max-tool-calls-per-round: ${CROWSSH_REACT_MAX_TOOL_CALLS_PER_ROUND:10}
+    token-budget: ${CROWSSH_REACT_TOKEN_BUDGET:8000}
+    wall-clock-timeout-millis: ${CROWSSH_REACT_WALL_CLOCK_TIMEOUT_MILLIS:600000}
+  # SSE 流式执行器：并发上限（背压）/ 心跳线程数
+  sse:
+    max-concurrent-streams: ${CROWSSH_SSE_MAX_CONCURRENT_STREAMS:50}
+    heartbeat-pool-size: ${CROWSSH_SSE_HEARTBEAT_POOL_SIZE:2}
 # 线程池配置
 thread:
   pool:

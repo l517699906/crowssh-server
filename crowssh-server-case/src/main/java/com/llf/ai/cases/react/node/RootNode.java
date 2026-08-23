@@ -4,10 +4,13 @@ import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
 import com.llf.ai.api.dto.ChatRequestDTO;
 import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
+import com.llf.ai.cases.react.config.ReActProperties;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.Resource;
+import java.time.Clock;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -28,9 +31,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component("reactRootNode")
 public class RootNode extends AbstractAIAgentReActSupport {
 
-    private static final int DEFAULT_MAX_STEPS = 50;
-    private static final int DEFAULT_MAX_TOOL_CALLS = 200;
-    private static final int DEFAULT_MAX_TOOL_CALLS_PER_ROUND = 10;
+    @Resource
+    private ReActProperties reactProperties;
+
+    /** 墙钟起点时钟；可注入以便测试。 */
+    private Clock clock = Clock.systemUTC();
 
     @Override
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -67,9 +72,7 @@ public class RootNode extends AbstractAIAgentReActSupport {
         dynamicContext.setCurrentStep(new AtomicInteger(0));
         dynamicContext.setTotalToolCallCount(new AtomicInteger(0));
         dynamicContext.setRoundToolCallCount(new AtomicInteger(0));
-        dynamicContext.setMaxSteps(DEFAULT_MAX_STEPS);
-        dynamicContext.setMaxToolCalls(DEFAULT_MAX_TOOL_CALLS);
-        dynamicContext.setMaxToolCallsPerRound(DEFAULT_MAX_TOOL_CALLS_PER_ROUND);
+        seedDynamicContext(dynamicContext);
 
         // 4. 初始化结果 DTO
         ReActResultDTO result = ReActResultDTO.builder()
@@ -89,6 +92,17 @@ public class RootNode extends AbstractAIAgentReActSupport {
 
         // 6. 路由到 AI 调用节点
         return router(requestParameter, dynamicContext);
+    }
+
+    /**
+     * 从配置播种护栏参数，并记录墙钟起点。抽为包级方法以便单测直接驱动（无需活容器）。
+     */
+    void seedDynamicContext(DefaultReActFactory.DynamicContext dynamicContext) {
+        dynamicContext.setMaxSteps(reactProperties.getMaxSteps());
+        dynamicContext.setMaxToolCalls(reactProperties.getMaxToolCalls());
+        dynamicContext.setMaxToolCallsPerRound(reactProperties.getMaxToolCallsPerRound());
+        dynamicContext.setWallClockTimeoutMillis(reactProperties.getWallClockTimeoutMillis());
+        dynamicContext.setLoopStartEpochMilli(clock.millis());
     }
 
     @Override

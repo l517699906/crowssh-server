@@ -8,6 +8,7 @@ import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 
@@ -35,67 +36,86 @@ import java.util.Map;
 @Component("reactLoopDecisionNode")
 public class LoopDecisionNode extends AbstractAIAgentReActSupport {
 
+    /** 墙钟判定时钟；可注入以便测试。 */
+    private Clock clock = Clock.systemUTC();
+
     @Override
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
         log.info("ReAct LoopDecisionNode - 循环决策，当前步数: {}/{}",
                 dynamicContext.getStep(), dynamicContext.getMaxSteps());
 
-        // 1. 检查是否已有终止原因
-        String stopReason = dynamicContext.getStopReason();
-        if (stopReason != null) {
-            log.info("已设置终止原因: {}", stopReason);
+        String stopReason = resolveStopReason(dynamicContext);
+
+        // resolveStopReason 返回 null 表示继续 ReAct 循环
+        if (stopReason == null) {
+            log.info("上一轮有工具调用，继续 ReAct 循环");
+            // 清空当前轮次缓冲，准备下一轮
+            dynamicContext.resetRoundBuffers();
             return router(requestParameter, dynamicContext);
         }
 
-        // 2. 检查最大步数
-        if (dynamicContext.getStep() >= dynamicContext.getMaxSteps()) {
-            log.info("达到最大步数: {}, 终止循环", dynamicContext.getMaxSteps());
-            dynamicContext.setStopReason("max_steps");
+        // 幂等：仅在尚未设置时写入，保留上游已设的终止原因
+        if (dynamicContext.getStopReason() == null) {
+            dynamicContext.setStopReason(stopReason);
+        }
+        if ("max_steps".equals(stopReason)) {
             dynamicContext.getResult().setMaxStepsReached(true);
-            return router(requestParameter, dynamicContext);
+        }
+        log.info("终止 ReAct 循环，stopReason={}", stopReason);
+        return router(requestParameter, dynamicContext);
+    }
+
+    /**
+     * 解析本轮终止原因；返回 {@code null} 表示应继续循环。
+     *
+     * <p>墙钟超时检查置于最前——即便还有工具调用待继续，超时也优先终止，作为模型卡住时的兜底。
+     * 抽为包级纯查询方法（无副作用）以便单测直接驱动。
+     */
+    String resolveStopReason(DefaultReActFactory.DynamicContext dynamicContext) {
+        // 0. 墙钟超时兜底（置于最前，优先于步数/工具调用等其他上限）
+        long timeout = dynamicContext.getWallClockTimeoutMillis();
+        if (timeout > 0
+                && clock.millis() - dynamicContext.getLoopStartEpochMilli() >= timeout) {
+            return "idle_timeout";
         }
 
-        // 3. 检查最大工具调用次数
+        // 1. 上游已设终止原因
+        String existing = dynamicContext.getStopReason();
+        if (existing != null) {
+            return existing;
+        }
+
+        // 2. 最大步数
+        if (dynamicContext.getStep() >= dynamicContext.getMaxSteps()) {
+            return "max_steps";
+        }
+
+        // 3. 最大工具调用次数
         if (dynamicContext.getResult().getTotalToolCalls() >= dynamicContext.getMaxToolCalls()) {
-            log.info("达到最大工具调用次数: {}, 终止循环",
-                    dynamicContext.getResult().getTotalToolCalls());
-            dynamicContext.setStopReason("max_tool_calls");
-            return router(requestParameter, dynamicContext);
+            return "max_tool_calls";
         }
 
-        // 4. 检查 assistant 消息是否包含终止指令
+        // 4. assistant 消息包含终止指令
         String assistantContent = dynamicContext.getAssistantContent() != null
                 ? dynamicContext.getAssistantContent().toString()
                 : "";
-
         if (containsFinishCommand(assistantContent)) {
-            log.info("AI 返回 finish 指令，终止循环");
-            dynamicContext.setStopReason("finish");
-            return router(requestParameter, dynamicContext);
+            return "finish";
         }
 
-        // 5. 检查错误
+        // 5. 错误
         if (dynamicContext.getErrorMessage() != null) {
-            log.info("发生错误: {}, 终止循环", dynamicContext.getErrorMessage());
-            dynamicContext.setStopReason("error");
-            return router(requestParameter, dynamicContext);
+            return "error";
         }
 
-        // 6. 检查上一轮是否有工具调用（继续 ReAct 循环的条件）
-        //    如果上一轮有工具调用，说明 AI 还在通过工具完成任务，需要继续对话
+        // 6. 上一轮有工具调用 → 继续循环
         List<Map<String, Object>> currentToolCalls = dynamicContext.getCurrentToolCalls();
         if (currentToolCalls != null && !currentToolCalls.isEmpty()) {
-            log.info("上一轮有 {} 个工具调用，继续 ReAct 循环", currentToolCalls.size());
-            // 清空当前轮次缓冲，准备下一轮
-            dynamicContext.resetRoundBuffers();
-            // 路由回 AiCallNode
-            return router(requestParameter, dynamicContext);
+            return null;
         }
 
         // 7. 无工具调用且无终止指令 → 循环完成
-        log.info("ReAct 循环完成，无更多工具调用");
-        dynamicContext.setStopReason("completed");
-        return router(requestParameter, dynamicContext);
+        return "completed";
     }
 
     @Override

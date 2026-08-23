@@ -57,7 +57,18 @@ public class TerminalSessionEntity {
      * 更新最后活跃时间
      */
     public void touch() {
-        this.lastActiveAt = LocalDateTime.now();
+        touch(LocalDateTime.now());
+    }
+
+    /**
+     * 以外部提供的时间戳更新最后活跃时间。
+     *
+     * <p>供领域服务在注入 Clock 后调用，使 TTL 判定可由可控时钟驱动。
+     *
+     * @param ts 活跃时间戳
+     */
+    public void touch(LocalDateTime ts) {
+        this.lastActiveAt = ts;
     }
 
 }

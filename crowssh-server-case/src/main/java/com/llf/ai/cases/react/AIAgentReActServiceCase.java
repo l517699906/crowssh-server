@@ -21,6 +21,11 @@ import javax.annotation.Resource;
 import java.util.concurrent.CancellationException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -62,6 +67,12 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     @Resource
     private ISshTerminalService sshTerminalService;
 
+    @Resource(name = "sseStreamExecutor")
+    private ExecutorService streamExecutor;
+
+    @Resource(name = "sseHeartbeatScheduler")
+    private ScheduledExecutorService heartbeatScheduler;
+
     private final Map<String, ActiveStream> activeStreams = new ConcurrentHashMap<>();
 
     @Override
@@ -77,7 +88,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
             AtomicBoolean streamActive = new AtomicBoolean(true);
             AtomicBoolean responseCompleted = new AtomicBoolean(false);
-            AtomicReference<Thread> streamThreadRef = new AtomicReference<>();
+            AtomicReference<Future<?>> streamFutureRef = new AtomicReference<>();
             DefaultReActFactory.DynamicContext dynamicContext = DefaultReActFactory.DynamicContext.builder()
                     .sessionId(sessionId)
                     .emitter(emitter)
@@ -87,7 +98,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
             Runnable cancelStream = () -> cancelStreamInternal(
                     streamActive,
-                    streamThreadRef,
+                    streamFutureRef,
                     requestDTO.getUserId(),
                     sessionId,
                     requestDTO.getTerminalSessionId());
@@ -105,14 +116,13 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     cancelStream
             );
 
-            Thread streamThread = createStreamThread(
+            Runnable streamTask = createStreamTask(
                     requestDTO,
                     dynamicContext,
                     responseCompleted,
                     cancelStream
             );
-            streamThreadRef.set(streamThread);
-            streamThread.start();
+            streamFutureRef.set(streamExecutor.submit(streamTask));
 
         } catch (Exception e) {
             log.error("ReAct 流式对话初始化失败: exceptionType={}", e.getClass().getName());
@@ -126,15 +136,15 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         return emitter;
     }
 
-    private Thread createStreamThread(
+    private Runnable createStreamTask(
             ChatRequestDTO requestDTO,
             DefaultReActFactory.DynamicContext dynamicContext,
             AtomicBoolean responseCompleted,
             Runnable cancelStream
     ) {
         String sessionId = dynamicContext.getSessionId();
-        Thread streamThread = new Thread(() -> {
-            Thread heartbeatThread = startHeartbeatThread(dynamicContext, cancelStream);
+        return () -> {
+            ScheduledFuture<?> heartbeatFuture = startHeartbeat(dynamicContext, cancelStream);
             ToolExecutionObserverRegistry.Observer executionObserver = executionEvent -> {
                 dynamicContext.recordToolExecutionEvent(executionEvent);
                 if (!dynamicContext.getStreamActive().get()) {
@@ -191,14 +201,12 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 }
             } finally {
                 dynamicContext.getStreamActive().set(false);
-                heartbeatThread.interrupt();
+                heartbeatFuture.cancel(false);
                 ToolExecutionObserverRegistry.unregister(sessionId, executionObserver);
                 activeStreams.remove(sessionId);
                 requestDTO.clearRuntimeSecret();
             }
-        }, "react-stream-" + sessionId);
-        streamThread.setDaemon(true);
-        return streamThread;
+        };
     }
 
     @Override
@@ -290,7 +298,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
     private void cancelStreamInternal(
             AtomicBoolean streamActive,
-            AtomicReference<Thread> streamThreadRef,
+            AtomicReference<Future<?>> streamFutureRef,
             String ownerId,
             String agentSessionId,
             String terminalSessionId
@@ -305,34 +313,26 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             log.debug("取消 AI SSH 命令时终端已结束 sessionId={} terminalSessionId={}",
                     agentSessionId, terminalSessionId);
         }
-        Thread streamThread = streamThreadRef.get();
-        if (streamThread != null && streamThread != Thread.currentThread()) {
-            streamThread.interrupt();
+        Future<?> streamFuture = streamFutureRef.get();
+        if (streamFuture != null) {
+            streamFuture.cancel(true);
         }
     }
 
-    private Thread startHeartbeatThread(
+    private ScheduledFuture<?> startHeartbeat(
             DefaultReActFactory.DynamicContext dynamicContext,
             Runnable cancelStream
     ) {
-        Thread heartbeatThread = new Thread(() -> {
+        return heartbeatScheduler.scheduleAtFixedRate(() -> {
+            if (!dynamicContext.getStreamActive().get()) {
+                return;
+            }
             try {
-                while (dynamicContext.getStreamActive().get()) {
-                    Thread.sleep(HEARTBEAT_INTERVAL_MILLIS);
-                    if (!dynamicContext.getStreamActive().get()) {
-                        break;
-                    }
-                    streamEventPublisher.sendHeartbeat(dynamicContext);
-                }
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
+                streamEventPublisher.sendHeartbeat(dynamicContext);
             } catch (Exception e) {
                 cancelStream.run();
             }
-        }, "sse-heartbeat-" + dynamicContext.getSessionId());
-        heartbeatThread.setDaemon(true);
-        heartbeatThread.start();
-        return heartbeatThread;
+        }, HEARTBEAT_INTERVAL_MILLIS, HEARTBEAT_INTERVAL_MILLIS, TimeUnit.MILLISECONDS);
     }
 
     private RuntimeChatModelScope openOptionalRuntimeModel(RuntimeModelConfigDTO runtimeModel) {
