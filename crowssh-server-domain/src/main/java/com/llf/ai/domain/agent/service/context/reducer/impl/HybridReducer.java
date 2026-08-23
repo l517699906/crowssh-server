@@ -3,6 +3,7 @@ package com.llf.ai.domain.agent.service.context.reducer.impl;
 import com.llf.ai.domain.agent.service.context.reducer.MessageReducer;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.Resource;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -38,8 +39,17 @@ import java.util.Set;
 @Component
 public class HybridReducer implements MessageReducer {
 
-    private final PriorityReducer priorityReducer;
-    private final SlidingWindowReducer slidingReducer;
+    /**
+     * 负责按重要性筛选历史消息，并尽量保留关键错误、路径和工具调用链。
+     */
+    @Resource
+    private PriorityReducer priorityReducer;
+
+    /**
+     * 负责按时间顺序保留最近的消息组，避免当前对话上下文断层。
+     */
+    @Resource
+    private SlidingWindowReducer slidingReducer;
 
     public HybridReducer(
             PriorityReducer priorityReducer,
@@ -49,6 +59,49 @@ public class HybridReducer implements MessageReducer {
         this.slidingReducer = slidingReducer;
     }
 
+    /**
+     * 执行混合裁剪，把“重要历史”和“近期上下文”合并为一份按原始顺序排列的消息列表。
+     *
+     * <p>这里采用"优先级主导 + 最近窗口补充 + 完整消息组保底"的组合策略：
+     * <ul>
+     *   <li>PriorityReducer 决定哪些历史消息最值得保留</li>
+     *   <li>SlidingWindowReducer 提供最近上下文补充，避免主策略过度偏向旧关键消息</li>
+     *   <li>最近 2 个完整消息组强制保底，确保当前轮上下文不被破坏</li>
+     * </ul>
+     *
+     * <p>案例：
+     * <pre>
+     *   原始消息组：
+     *   G1=[system: 你是运维助手]
+     *   G2=[user: 查看 /etc/nginx/nginx.conf]
+     *   G3=[assistant: 很长的分析说明（如果你用waliapi的话，可以看过调用过程中的日志信息）...]
+     *   G4=[assistant(tool_calls), tool: permission denied]
+     *   G5=[user: 那你改查 error.log]
+     *   G6=[assistant(tool_calls), tool: tail 结果]
+     *
+     *   PriorityReducer 可能给出：
+     *   A = [G1, G2, G4, G5]
+     *
+     *   SlidingWindowReducer 可能给出：
+     *   B = [G4, G5, G6]
+     *
+     *   HybridReducer 合并过程：
+     *   1. 先保留 A
+     *   2. 再把 B 中 A 还没有的 G6 补进来
+     *   3. 最后再强制保底最近 2 组（这里就是 G5、G6）
+     *
+     *   最终结果：
+     *   [G1, G2, G4, G5, G6]
+     * </pre>
+     *
+     * <p>这样可以同时避免两种极端：
+     * 一种是只看优先级，导致最近上下文断层；
+     * 另一种是只看最近窗口，导致关键错误和关键指令被冲掉。
+     *
+     * @param messages 原始消息列表
+     * @param tokenBudget token 预算
+     * @return 裁剪后的消息列表
+     */
     @Override
     public List<Map<String, Object>> reduce(List<Map<String, Object>> messages, int tokenBudget) {
         if (messages == null || messages.isEmpty() || tokenBudget <= 0) {

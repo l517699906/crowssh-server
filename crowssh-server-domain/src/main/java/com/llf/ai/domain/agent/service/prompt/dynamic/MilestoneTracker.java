@@ -82,7 +82,30 @@ public class MilestoneTracker {
     }
 
     /**
-     * 检测并记录里程碑事件。规则按配置文件顺序匹配，第一个命中的规则生效。
+     * 检测并记录里程碑事件。
+     * <p>
+     * 按角色分别识别关键事件，记录到会话级缓存。
+     * <p>
+     * 案例 1：用户纠偏
+     * <pre>
+     *   detectAndRecord("session-001", "user", "不对，应该是看 /var/log/nginx/error.log")
+     *   -> 匹配 "不对|不是这样|改一下|换个思路"
+     *   -> 记录 TASK_CHANGE: "不对，应该是看 /var/log/nginx/error.log"
+     * </pre>
+     * <p>
+     * 案例 2：工具报错
+     * <pre>
+     *   detectAndRecord("session-001", "tool", "Error: permission denied")
+     *   -> 匹配 "error|failed|exception"
+     *   -> 记录 ERROR: "Error: permission denied"
+     * </pre>
+     * <p>
+     * 案例 3：任务完成
+     * <pre>
+     *   detectAndRecord("session-001", "user", "搞定，帮大忙了！")
+     *   -> 匹配 "完成了|搞定|结束"
+     *   -> 记录 TASK_COMPLETE: "搞定，帮大忙了！"
+     * </pre>
      */
     public void detectAndRecord(String sessionId, String role, String content) {
         if (sessionId == null || sessionId.isBlank() || content == null || content.isEmpty()) {

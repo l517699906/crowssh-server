@@ -59,6 +59,9 @@ public class RunnerNode extends AbstractArmorySupport {
                 .agentName(agentName)
                 .agentDesc(agentDesc)
                 .runner(runner)
+                // 透传 Agent 的 API 配置与模型名，供意图识别等旁路能力复用（见 AiAgentRegisterVO）。这样就都统一了，都用一套LLM配置
+                .openAiApi(dynamicContext.getOpenAiApi())
+                .chatModelName(aiAgentConfigTableVO.getModule().getChatModel().getModel())
                 .build();
 
         // 注册到 Spring 容器

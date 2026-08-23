@@ -94,6 +94,33 @@ public class ToolResultProvider implements ContextProvider {
         return result;
     }
 
+    /**
+     * 推送一条工具执行结果到会话级缓存，并生成摘要。
+     * <p>
+     * 写入后使摘要缓存失效，下一轮 provide() 时重新生成摘要。
+     * <p>
+     * 案例 1：少量结果（≤5条）
+     * <pre>
+     *   推送前：results["session-001"] = [ls_result, tail_result]
+     *
+     *   调用 pushResult("session-001", "cat", "配置文件内容...")
+     *   -> results["session-001"] = [ls_result, tail_result, cat_result]
+     *   -> summaryCache 失效
+     *
+     *   下一轮 provide() 时生成摘要：
+     *   "ls: total 12\n- tail: tail -100 error.log\n- cat: 配置文件内容..."
+     * </pre>
+     * <p>
+     * 案例 2：大量结果（>5条，自动淘汰最旧的）
+     * <pre>
+     *   推送前：results["session-001"] 已有 48 条
+     *
+     *   调用 pushResult("session-001", "grep", "匹配结果...")
+     *   -> results["session-001"] = [...49条新记录]
+     *   -> 超出 MAX_ENTRIES_PER_SESSION=50，淘汰最旧的 1 条
+     *   -> 最终保留 50 条最近的结果
+     * </pre>
+     */
     public void pushResult(String sessionId, String toolName, String result) {
         List<ToolResultEntry> entries = results.computeIfAbsent(
                 sessionId, k -> new CopyOnWriteArrayList<>());
@@ -114,6 +141,35 @@ public class ToolResultProvider implements ContextProvider {
         summaryCache.remove(sessionId);
     }
 
+    /**
+     * 生成工具执行摘要，用于注入 Prompt。
+     * <p>
+     * 摘要策略：
+     * <ul>
+     *   <li>≤5 条：逐条拼接 "工具名: 结果(截断100字)"</li>
+     *   <li>>5 条：模板化压缩 "最近执行了 N 个工具调用" + 最近5条(截断80字)</li>
+     * </ul>
+     * <p>
+     * 案例 1：少量结果
+     * <pre>
+     *   entries = [
+     *     { toolName="ls", result="total 12\ndrwxr-xr-x" },
+     *     { toolName="tail", result="error: connection refused" }
+     *   ]
+     *
+     *   生成摘要：
+     *   "ls: total 12\ndrwxr-xr-x\ntail: error: connection refused"
+     * </pre>
+     * <p>
+     * 案例 2：大量结果
+     * <pre>
+     *   entries.size() = 10
+     *
+     *   生成摘要：
+     *   "最近执行了 10 个工具调用:\n- ls: total 12\n- tail: error...\n..."
+     *   （只展示最近5条）
+     * </pre>
+     */
     private String generateSummary(List<ToolResultEntry> entries) {
         // 少量结果直接拼接，大量结果模板化压缩
         if (entries.size() <= 5) {

@@ -34,4 +34,12 @@ public class PromptContextVO {
      * 当前任务描述（首条用户消息）
      */
     private String taskDescription;
+
+    /**
+     * 当前意图标签（由意图识别系统经 PromptService.buildEnrichedMessage(intentLabel) 注入）。
+     * <p>
+     * 值为 {@code IntentTypeEnumVO.name()}（如 "DIAGNOSE"），可为 null 表示未识别。
+     * 由 {@code DynamicPromptBuilder} 渲染为消息前缀 "[用户意图] xxx"，让主模型感知意图但不强制路由。
+     */
+    private String intentLabel;
 }

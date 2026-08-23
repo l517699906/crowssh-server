@@ -44,6 +44,25 @@ public interface IPromptService {
                                 List<String> recentCommands, List<Map<String, Object>> messageHistory);
 
     /**
+     * 构建注入了动态上下文的用户消息（含意图标签）
+     * <p>
+     * 相比不带 intentLabel 的重载，额外将意图识别结果注入 PromptContextVO，
+     * 由 DynamicPromptBuilder 渲染为 "[用户意图] xxx" 前缀，让主模型感知当前意图但不强制路由。
+     *
+     * @param userMessage        原始用户消息
+     * @param ownerId            服务端认证后的资源归属 ID
+     * @param sessionId          对话会话 ID
+     * @param terminalSessionId  SSH 终端会话 ID（可为 null）
+     * @param recentCommands     最近执行的命令列表
+     * @param messageHistory     对话历史记录
+     * @param intentLabel        意图标签，取 {@code IntentTypeEnumVO.name()}（可为 null 表示未识别）
+     * @return 注入了动态上下文的用户消息
+     */
+    String buildEnrichedMessage(String userMessage, String ownerId, String sessionId, String terminalSessionId,
+                                List<String> recentCommands, List<Map<String, Object>> messageHistory,
+                                String intentLabel);
+
+    /**
      * 清除指定会话的里程碑记录
      *
      * @param sessionId 对话会话 ID

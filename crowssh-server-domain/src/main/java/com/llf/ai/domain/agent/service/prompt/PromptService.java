@@ -3,6 +3,7 @@ package com.llf.ai.domain.agent.service.prompt;
 import com.llf.ai.domain.agent.model.valobj.prompt.PromptContextVO;
 import com.llf.ai.domain.agent.service.IChatContextService;
 import com.llf.ai.domain.agent.service.IPromptService;
+import com.llf.ai.domain.agent.service.prompt.dynamic.DynamicPromptBuilder;
 import com.llf.ai.domain.agent.service.prompt.dynamic.MilestoneTracker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -74,12 +75,38 @@ public class PromptService implements IPromptService {
     @Override
     public String buildEnrichedMessage(String userMessage, String ownerId, String sessionId, String terminalSessionId,
                                        List<String> recentCommands, List<Map<String, Object>> messageHistory) {
+        // 向后兼容：无意图标签的重载，委托给带 intentLabel 的版本（传 null）
+        return buildEnrichedMessage(userMessage, ownerId, sessionId, terminalSessionId,
+                recentCommands, messageHistory, null);
+    }
+
+    /**
+     * 构建注入了动态上下文的用户消息（含意图标签）。
+     * <p>
+     * 意图标签流转：intentLabel → PromptContextVO.intentLabel → DynamicPromptBuilder 前缀 "[用户意图]"。
+     *
+     * @param userMessage        原始用户消息
+     * @param ownerId            服务端认证后的资源归属 ID
+     * @param sessionId          对话会话 ID
+     * @param terminalSessionId  SSH 终端会话 ID（可为 null）
+     * @param recentCommands     最近执行的命令列表
+     * @param messageHistory     对话历史记录
+     * @param intentLabel        意图标签（可为 null 表示未识别）
+     * @return 注入了动态上下文的用户消息
+     */
+    @Override
+    public String buildEnrichedMessage(String userMessage, String ownerId, String sessionId, String terminalSessionId,
+                                       List<String> recentCommands, List<Map<String, Object>> messageHistory,
+                                       String intentLabel) {
         // 1. 通过 ChatContextService 采集上下文
         PromptContextVO promptContextVO = chatContextService.buildPromptContext(
                 sessionId, ownerId, terminalSessionId, messageHistory);
 
         // 追加来自 Case 层的 recentCommands
         promptContextVO.setRecentCommands(recentCommands);
+
+        // 注入意图标签，供 DynamicPromptBuilder 渲染 "[用户意图]" 前缀
+        promptContextVO.setIntentLabel(intentLabel);
 
         // 2. 生成消息前缀
         String prefix = dynamicPromptBuilder.buildMessagePrefix(promptContextVO);
@@ -89,12 +116,13 @@ public class PromptService implements IPromptService {
 
         // 日志验证点：只记录上下文段是否注入及长度，不记录命令输出或完整 Prompt。
         log.info("[上下文管理] Prompt 注入: sessionId={}, ownerPresent={}, terminalPresent={}, "
-                        + "[当前任务]={}, [工具执行摘要]={}, historySize={}, prefixLength={}, enrichedLength={}",
+                        + "[当前任务]={}, [工具执行摘要]={}, [用户意图]={}, historySize={}, prefixLength={}, enrichedLength={}",
                 sessionId,
                 hasText(ownerId),
                 hasText(terminalSessionId),
                 hasText(promptContextVO.getTaskDescription()),
                 hasText(promptContextVO.getToolResultSummary()),
+                intentLabel == null ? "-" : intentLabel,
                 messageHistory == null ? 0 : messageHistory.size(),
                 prefix.length(),
                 enrichedMessage == null ? 0 : enrichedMessage.length());

@@ -61,6 +61,32 @@ public class TerminalStateProvider implements ContextProvider {
         return true;
     }
 
+    /**
+     * 提供终端环境信息上下文。
+     * <p>
+     * 实时采集远程服务器的 OS 信息、当前用户、工作目录、运行时长。
+     * <p>
+     * 案例：
+     * <pre>
+     *   terminalSessionId = "ssh-session-001"
+     *
+     *   执行命令：
+     *   - uname -srm → "Linux 5.15.0-91-generic x86_64"
+     *   - whoami → "root"
+     *   - pwd → "/var/log/nginx"
+     *   - uptime -p → "up 3 hours, 25 minutes"
+     *
+     *   返回：
+     *   {
+     *     osInfo="Linux 5.15.0-91-generic x86_64",
+     *     currentUser="root",
+     *     currentDirectory="/var/log/nginx",
+     *     uptime="up 3 hours, 25 minutes"
+     *   }
+     * </pre>
+     * <p>
+     * 容错：单条命令失败仅该字段留空，不影响其他字段。
+     */
     @Override
     public Map<String, Object> provide(String sessionId, String ownerId, String terminalSessionId,
                                        List<Map<String, Object>> messageHistory) {
