@@ -60,6 +60,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/device/register").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/health").permitAll()
+                        // WebSocket 握手由一次性短期票据认证，浏览器无法设置 Authorization 请求头。
+                        .requestMatchers(HttpMethod.GET, "/api/v1/ssh/terminal/ws").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(
                         new DeviceTokenAuthenticationFilter(deviceIdentityService),

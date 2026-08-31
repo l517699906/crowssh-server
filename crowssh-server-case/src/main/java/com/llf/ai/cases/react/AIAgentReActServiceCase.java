@@ -125,7 +125,9 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             streamFutureRef.set(streamExecutor.submit(streamTask));
 
         } catch (Exception e) {
-            log.error("ReAct 流式对话初始化失败: exceptionType={}", e.getClass().getName());
+            Throwable cause = e.getCause();
+            log.error("ReAct 流式对话初始化失败: exceptionType={} causeType={}",
+                    e.getClass().getName(), cause == null ? "none" : cause.getClass().getName());
             if (registeredSessionId != null) {
                 activeStreams.remove(registeredSessionId);
             }

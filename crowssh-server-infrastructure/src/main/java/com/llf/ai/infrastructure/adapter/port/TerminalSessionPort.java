@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import net.schmizz.sshj.connection.channel.direct.PTYMode;
 import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.connection.channel.direct.Signal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.Closeable;
@@ -32,6 +34,8 @@ import java.util.concurrent.locks.ReentrantLock;
 public class TerminalSessionPort implements ITerminalSessionPort {
 
     private static final int WRITE_MAX_RETRIES = 2;
+    private static final Logger DIAGNOSTIC =
+            LoggerFactory.getLogger("CROWSSH_TERMINAL_DIAGNOSTIC");
     private static final String TERMINAL_TYPE = "xterm-256color";
     private static final long COMMAND_CANCEL_GRACE_MS = 2000;
     private static final long OUTPUT_DRAIN_TIMEOUT_MS = 2000;
@@ -126,6 +130,8 @@ public class TerminalSessionPort implements ITerminalSessionPort {
 
         } catch (Exception e) {
             log.error("打开终端会话失败 connectionId={}", connectionId, e);
+            DIAGNOSTIC.error("event=terminal_open_error sessionId={} connectionId={} errorType={} message={}",
+                    sessionId, connectionId, e.getClass().getSimpleName(), sanitize(e.getMessage()));
             cleanup(sessionId);
             throw new RuntimeException("打开终端失败: " + e.getMessage(), e);
         }
@@ -153,6 +159,8 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                     lastError = e;
                     log.warn("写入终端失败 (attempt={}/{}) sessionId={} reason={}",
                             attempt, WRITE_MAX_RETRIES, sessionId, e.getMessage());
+                    DIAGNOSTIC.warn("event=terminal_write_error sessionId={} attempt={} errorType={} message={}",
+                            sessionId, attempt, e.getClass().getSimpleName(), sanitize(e.getMessage()));
                     if (!sessionExists(sessionId)) {
                         break;
                     }
@@ -555,6 +563,7 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                     }
                     if (len == -1) {
                         log.warn("终端 Shell Channel EOF sessionId={}", sessionId);
+                        DIAGNOSTIC.warn("event=terminal_reader_eof sessionId={}", sessionId);
                         break;
                     }
                     TerminalWorkingDirectoryTracker tracker = workingDirectoryTrackers.get(sessionId);
@@ -575,6 +584,8 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                 }
             } catch (IOException e) {
                 log.debug("终端输出读取异常 sessionId={} reason={}", sessionId, e.getMessage());
+                DIAGNOSTIC.warn("event=terminal_reader_error sessionId={} errorType={} message={}",
+                        sessionId, e.getClass().getSimpleName(), sanitize(e.getMessage()));
             } finally {
                 readerAlive.computeIfPresent(sessionId, (key, value) -> false);
 
@@ -582,6 +593,8 @@ public class TerminalSessionPort implements ITerminalSessionPort {
                 boolean channelOpen = channel != null && channel.isOpen();
                 boolean channelEof = channel != null && channel.isEOF();
                 log.warn("终端输出读取线程退出 sessionId={} channelOpen={} channelEof={}",
+                        sessionId, channelOpen, channelEof);
+                DIAGNOSTIC.warn("event=terminal_reader_exit sessionId={} channelOpen={} channelEof={}",
                         sessionId, channelOpen, channelEof);
 
                 cleanup(sessionId);
@@ -648,6 +661,14 @@ public class TerminalSessionPort implements ITerminalSessionPort {
         shellIntegrationOutputFilters.remove(sessionId);
         terminalWriteLocks.remove(sessionId);
         commandExecutionLocks.remove(sessionId);
+    }
+
+    private static String sanitize(String value) {
+        if (value == null || value.isBlank()) {
+            return "none";
+        }
+        String sanitized = value.replace('\r', ' ').replace('\n', ' ');
+        return sanitized.length() > 160 ? sanitized.substring(0, 160) : sanitized;
     }
 
 }

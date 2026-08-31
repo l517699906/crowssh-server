@@ -9,6 +9,8 @@ import com.llf.ai.domain.ssh.service.ISshConnectionOwnershipService;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
 import com.llf.ai.domain.ssh.service.ITerminalSessionReaper;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +32,8 @@ public class SshTerminalService implements ISshTerminalService, ITerminalSession
 
     /** AI 命令最长执行 8 分钟，部署脚本中的系统级 timeout 必须小于该值。 */
     private static final long AI_COMMAND_TIMEOUT_MS = 480_000L;
+    private static final Logger DIAGNOSTIC =
+            LoggerFactory.getLogger("CROWSSH_TERMINAL_DIAGNOSTIC");
 
     private final ISshSessionPort sshSessionService;
     private final ITerminalSessionPort terminalSessionService;
@@ -112,6 +116,8 @@ public class SshTerminalService implements ISshTerminalService, ITerminalSession
 
         sessionCache.put(sessionId, entity);
         log.info("终端会话创建成功 sessionId={}", sessionId);
+        DIAGNOSTIC.info("event=terminal_opened sessionId={} connectionId={} cols={} rows={}",
+                sessionId, connectionId, cols, rows);
 
         return entity;
     }
@@ -198,6 +204,7 @@ public class SshTerminalService implements ISshTerminalService, ITerminalSession
         entity.setStatus(2);
         terminalSessionService.closeSession(sessionId);
         log.info("终端会话已关闭 sessionId={}", sessionId);
+        DIAGNOSTIC.info("event=terminal_closed sessionId={} reason=explicit_close", sessionId);
     }
 
     @Override
@@ -211,7 +218,10 @@ public class SshTerminalService implements ISshTerminalService, ITerminalSession
         if (entity == null) {
             throw new IllegalArgumentException("终端会话不存在或已关闭");
         }
-        return terminalSessionService.read(sessionId);
+        String output = terminalSessionService.read(sessionId);
+        // 客户端仍在读取或 WebSocket 心跳正常，说明终端会话仍被使用。
+        entity.touch(LocalDateTime.now(clock));
+        return output;
     }
 
     @Override
@@ -242,6 +252,8 @@ public class SshTerminalService implements ISshTerminalService, ITerminalSession
             return;
         }
         log.warn("终端底层通道已失效，清理领域会话 sessionId={} connectionId={}",
+                sessionId, entity.getConnectionId());
+        DIAGNOSTIC.warn("event=terminal_invalidated sessionId={} connectionId={} reason=channel_closed",
                 sessionId, entity.getConnectionId());
     }
 
@@ -288,6 +300,8 @@ public class SshTerminalService implements ISshTerminalService, ITerminalSession
                     && evict(entry.getKey(), entity)) {
                 reaped++;
                 log.info("回收空闲终端会话 sessionId={} lastActiveAt={}",
+                        entry.getKey(), lastActive);
+                DIAGNOSTIC.warn("event=terminal_closed sessionId={} reason=idle_timeout lastActiveAt={}",
                         entry.getKey(), lastActive);
             }
         }

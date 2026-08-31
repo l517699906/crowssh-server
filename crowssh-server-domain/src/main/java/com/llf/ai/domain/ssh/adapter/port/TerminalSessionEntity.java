@@ -41,7 +41,7 @@ public class TerminalSessionEntity {
     private LocalDateTime createdAt;
 
     /** 最后活跃时间 */
-    private LocalDateTime lastActiveAt;
+    private volatile LocalDateTime lastActiveAt;
 
     /** 会话状态: 0-未激活, 1-活跃, 2-已关闭 */
     private int status;
