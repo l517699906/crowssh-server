@@ -2,6 +2,8 @@ package com.llf.ai.domain.agent.service;
 
 import com.google.adk.events.Event;
 import com.llf.ai.domain.agent.model.entity.ChatCommandEntity;
+import com.llf.ai.domain.agent.model.entity.ChatMessageEntity;
+import com.llf.ai.domain.agent.model.entity.ChatSessionEntity;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import io.reactivex.rxjava3.core.Flowable;
 
@@ -44,6 +46,14 @@ public interface IChatService {
             String connectionId,
             String terminalSessionId
     );
+
+    /**
+     * 读取已归属当前主体的会话资源绑定。
+     * <p>用于服务重启后把持久化的 SSH 连接/终端绑定回填到请求上下文。</p>
+     */
+    default ChatSessionEntity getSessionContext(String agentId, String userId, String sessionId) {
+        return null;
+    }
 
     /**
      * 处理消息
@@ -114,6 +124,16 @@ public interface IChatService {
             String terminalSessionId,
             String connectionId
     );
+
+    /**
+     * 查询用户会话列表
+     */
+    List<ChatSessionEntity> querySessionList(String agentId, String userId, int limit);
+
+    /**
+     * 按服务端认证后的归属主体查询会话消息，避免只凭 sessionId 读取历史。
+     */
+    List<ChatMessageEntity> queryMessageList(String userId, String sessionId, int limit);
 
     /**
      * 处理消息（流式）

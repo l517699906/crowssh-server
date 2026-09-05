@@ -83,6 +83,21 @@
         </rollingPolicy>
     </appender>
 
+    <!-- 终端连接诊断：只记录生命周期与异常元数据，不记录输入、输出或认证凭据。 -->
+    <appender name="TERMINAL_DIAGNOSTIC_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>./data/log/terminal_diagnostic.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5p %m%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>./data/log/terminal-diagnostic-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>20MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
     <!-- 异步输出 -->
     <appender name="ASYNC_FILE_INFO" class="ch.qos.logback.classic.AsyncAppender">
         <!-- 队列剩余容量小于discardingThreshold,则会丢弃TRACT、DEBUG、INFO级别的日志;默认值-1,为queueSize的20%;0不丢失日志 -->
@@ -117,6 +132,9 @@
     <logger name="net.schmizz.sshj" level="WARN"/>
     <logger name="CROWSSH_SECURITY_AUDIT" level="INFO" additivity="false">
         <appender-ref ref="SECURITY_AUDIT_FILE"/>
+    </logger>
+    <logger name="CROWSSH_TERMINAL_DIAGNOSTIC" level="INFO" additivity="false">
+        <appender-ref ref="TERMINAL_DIAGNOSTIC_FILE"/>
     </logger>
 
     <root level="info">

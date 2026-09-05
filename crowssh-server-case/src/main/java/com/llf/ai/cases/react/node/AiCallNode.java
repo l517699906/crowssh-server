@@ -12,10 +12,7 @@ import com.llf.ai.cases.react.guard.ToolResultConsistencyGuard;
 import com.llf.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.llf.ai.domain.agent.model.valobj.intent.IntentResultVO;
 import com.llf.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
-import com.llf.ai.domain.agent.service.IChatContextService;
-import com.llf.ai.domain.agent.service.IChatService;
-import com.llf.ai.domain.agent.service.IIntentService;
-import com.llf.ai.domain.agent.service.IPromptService;
+import com.llf.ai.domain.agent.service.*;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
 import com.llf.ai.domain.agent.service.intent.IntentService;
@@ -88,6 +85,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     @Resource
     private IIntentService intentService;
 
+    @jakarta.annotation.Resource
+    private ILongTermMemoryService longTermMemoryService;
+
     /** 用于取回当前 Agent 的模型配置（openAiApi / chatModelName），供意图识别复用 */
     @Resource
     private DefaultArmoryFactory defaultArmoryFactory;
@@ -123,6 +123,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 5. 构建动态上下文并注入用户消息
         String enrichedMessage = buildEnrichedMessage(lastUserMessage, dynamicContext);
         log.debug("注入动态上下文后消息长度: {} -> {}", lastUserMessage.length(), enrichedMessage.length());
+
+        // 保存未经富化的用户消息，避免把动态环境/记忆前缀污染到持久化历史。
+        saveUserMessage(dynamicContext, lastUserMessage);
 
         // 6. 重置 ReAct 循环标志
         dynamicContext.setStopReason(null);
@@ -183,6 +186,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         int roundToolCalls = processCompletedToolEvents(dynamicContext);
         publishReconciledText(dynamicContext, textAccumulator, hasError);
+        if (!textAccumulator.isEmpty()) {
+            saveAssistantMessage(dynamicContext, textAccumulator.toString());
+        }
 
         // 8. 更新步数和工具调用统计
         dynamicContext.incrementStep();
@@ -266,7 +272,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         for (int i = history.size() - 1; i >= 0; i--) {
             Map<String, Object> msg = history.get(i);
             if ("user".equals(msg.get("role"))) {
-                return (String) msg.get("content");
+                Object content = msg.get("content");
+                return content == null ? "" : String.valueOf(content);
             }
         }
 
@@ -356,6 +363,10 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             promptService.detectAndRecordMilestone(
                     dynamicContext.getSessionId(), "tool", milestoneContent(event));
 
+            // ADK 自动执行工具时不会经过 ToolCallNode，补齐持久化与长期记忆提取闭环。
+            saveToolMessage(dynamicContext, event.getToolName(), event.getToolCallId(),
+                    resultContent, isSuccessfulToolEvent(event, resultContent));
+
             // 日志验证点：这里是工具事实进入上下文缓存的唯一 ReAct 写入点，下一轮才会注入摘要。
             log.info("[上下文管理] [工具执行摘要] AiCallNode 写入: sessionId={}, toolName={}, status={}, resultLength={}",
                     dynamicContext.getSessionId(), event.getToolName(), event.getStatus(), resultContent.length());
@@ -366,6 +377,77 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             handleIntentFeedback(dynamicContext, resultContent);
         }
         return completedEvents.size();
+    }
+
+    private void saveUserMessage(
+            DefaultReActFactory.DynamicContext dynamicContext, String message) {
+        if (longTermMemoryService == null) {
+            return;
+        }
+        try {
+            longTermMemoryService.saveUserMessage(
+                    dynamicContext.getUserId(),
+                    dynamicContext.getSessionId(),
+                    message,
+                    dynamicContext.getCurrentIntent(),
+                    dynamicContext.getStep() == 0
+            );
+        } catch (RuntimeException e) {
+            log.warn("保存用户消息与长期记忆失败 sessionId={}", dynamicContext.getSessionId(), e);
+        }
+    }
+
+    private void saveAssistantMessage(
+            DefaultReActFactory.DynamicContext dynamicContext, String message) {
+        if (longTermMemoryService == null) {
+            return;
+        }
+        try {
+            longTermMemoryService.saveAssistantMessage(
+                    dynamicContext.getUserId(), dynamicContext.getSessionId(), message);
+        } catch (RuntimeException e) {
+            log.warn("保存助手消息与长期记忆失败 sessionId={}", dynamicContext.getSessionId(), e);
+        }
+    }
+
+    private void saveToolMessage(
+            DefaultReActFactory.DynamicContext dynamicContext,
+            String toolName,
+            String toolCallId,
+            String resultContent,
+            boolean success) {
+        if (longTermMemoryService == null) {
+            return;
+        }
+        try {
+            longTermMemoryService.saveToolMessage(
+                    dynamicContext.getUserId(),
+                    dynamicContext.getSessionId(),
+                    toolName,
+                    toolCallId,
+                    resultContent,
+                    success
+            );
+        } catch (RuntimeException e) {
+            log.warn("保存工具消息与长期记忆失败 sessionId={}, tool={}",
+                    dynamicContext.getSessionId(), toolName, e);
+        }
+    }
+
+    private boolean isSuccessfulToolEvent(ToolExecutionEvent event, String resultContent) {
+        String status = event.getStatus();
+        if (status != null && ("error".equalsIgnoreCase(status)
+                || "failed".equalsIgnoreCase(status)
+                || "cancelled".equalsIgnoreCase(status))) {
+            return false;
+        }
+        String normalized = resultContent == null ? "" : resultContent.toLowerCase(Locale.ROOT);
+        return !(normalized.contains("permission denied")
+                || normalized.contains("connection refused")
+                || normalized.contains("no such file")
+                || normalized.contains("not found")
+                || normalized.contains("failed")
+                || normalized.contains("error"));
     }
 
     private String milestoneContent(ToolExecutionEvent event) {

@@ -6,6 +6,7 @@ import com.llf.ai.api.dto.RuntimeModelConfigDTO;
 import com.llf.ai.cases.IAIAgentReActServiceCase;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.cases.react.node.RootNode;
+import com.llf.ai.domain.agent.model.entity.ChatSessionEntity;
 import com.llf.ai.domain.agent.model.valobj.RuntimeModelConfig;
 import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.CommandApprovalService;
@@ -269,6 +270,16 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 requestDTO.getTerminalSessionId()
         );
         requestDTO.setSessionId(sessionId);
+        ChatSessionEntity sessionContext = chatService.getSessionContext(
+                requestDTO.getAgentId(), requestDTO.getUserId(), sessionId);
+        if (sessionContext != null) {
+            if (requestDTO.getConnectionId() == null || requestDTO.getConnectionId().isBlank()) {
+                requestDTO.setConnectionId(sessionContext.getConnectionId());
+            }
+            if (requestDTO.getTerminalSessionId() == null || requestDTO.getTerminalSessionId().isBlank()) {
+                requestDTO.setTerminalSessionId(sessionContext.getTerminalSessionId());
+            }
+        }
         return sessionId;
     }
 

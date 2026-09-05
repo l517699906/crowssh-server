@@ -57,10 +57,14 @@ import java.util.stream.Collectors;
 @Component
 public class LLMIntentClassifier implements IIntentClassifier {
 
+    // 独立 ChatModel 实例（无工具回调、temperature=0.1），由 configure 注入后惰性构建
     private volatile ChatModel chatModel;
+    // Agent 装配链路传入的 OpenAiApi（与 Runner 共用一套配置）
     private volatile OpenAiApi openAiApi;
+    // Agent 配置的模型名称（如 "gpt-4"、"claude-3"）
     private volatile String modelName;
 
+    // JSON 解析器，用于解析 LLM 返回的 JSON 响应
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -122,6 +126,12 @@ public class LLMIntentClassifier implements IIntentClassifier {
                 .build();
     }
 
+    /**
+     * LLM 意图分类 Prompt 模板：包含意图清单 + few-shot 示例 + 对话上下文占位符。
+     * <p>
+     * 占位符：{{CONTEXT}} → 最近意图历史 + 进行中任务态；{{MESSAGE}} → 待分类的用户输入。
+     * 输出约定：仅返回 JSON，格式 {"intent":"类型","confidence":0.0-1.0,"entities":{},"candidates":["次选"]}
+     */
     private static final String CLASSIFY_PROMPT_TEMPLATE = """
             你是一个 SSH 运维场景的意图识别系统。分析用户输入，返回 JSON 格式的意图分类结果。
             
@@ -266,23 +276,23 @@ public class LLMIntentClassifier implements IIntentClassifier {
         }
     }
 
+    /**
+     * 从 LLM 原始文本中提取首个 JSON 对象并解析；任一环节失败均降级 UNKNOWN，
+     * 含解释性文字或咒语等非 JSON 输出不会导致分类器抛异常。
+     * <p>
+     * 解析步骤：
+     * <ol>
+     *   <li>正则提取首个 {...} JSON 片段</li>
+     *   <li>解析为 Map，提取 intent/confidence/entities/candidates</li>
+     *   <li>将 candidates 列表转换为 IntentTypeEnumVO 列表（过滤无效值）</li>
+     *   <li>任何异常 → 返回 UNKNOWN(conf=0)</li>
+     * </ol>
+     *
+     * @param response LLM 返回的原始文本
+     * @return 解析后的 IntentResultVO，失败时返回 UNKNOWN
+     */
     @SuppressWarnings("unchecked")
     private IntentResultVO parseResponse(String response) {
-        /**
-         * 从 LLM 原始文本中提取首个 JSON 对象并解析；任一环节失败均降级 UNKNOWN，
-         * 含解释性文字或咒语等非 JSON 输出不会导致分类器抛异常。
-         * <p>
-         * 解析步骤：
-         * <ol>
-         *   <li>正则提取首个 {...} JSON 片段</li>
-         *   <li>解析为 Map，提取 intent/confidence/entities/candidates</li>
-         *   <li>将 candidates 列表转换为 IntentTypeEnumVO 列表（过滤无效值）</li>
-         *   <li>任何异常 → 返回 UNKNOWN(conf=0)</li>
-         * </ol>
-         *
-         * @param response LLM 返回的原始文本
-         * @return 解析后的 IntentResultVO，失败时返回 UNKNOWN
-         */
         try {
             // 提取 JSON 部分
             String json = response.replaceAll("(?s).*?(\\{.*}).*", "$1");

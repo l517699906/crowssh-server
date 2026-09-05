@@ -170,30 +170,30 @@ public class ContextTracker {
         return getContext(sessionId).getConsecutiveFailures();
     }
 
+    /**
+     * 获取会话当前任务状态。
+     * <p>
+     * 任务态包含当前进行中的意图、步骤索引及完成标志，供分类器判断是否应返回
+     * {@link com.llf.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO#CONTINUE}。
+     *
+     * @param sessionId 会话 ID
+     * @return 任务状态，若会话无任务态则返回 null
+     */
     public TaskStateVO getTaskState(String sessionId) {
-        /**
-         * 获取会话当前任务状态。
-         * <p>
-         * 任务态包含当前进行中的意图、步骤索引及完成标志，供分类器判断是否应返回
-         * {@link com.llf.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO#CONTINUE}。
-         *
-         * @param sessionId 会话 ID
-         * @return 任务状态，若会话无任务态则返回 null
-         */
         return getContext(sessionId).getTaskState();
     }
 
+    /**
+     * 设置或更新会话的任务状态。
+     * <p>
+     * 通常由主流程（如多步诊断任务启动时）调用，用于记录当前进行中的意图、
+     * 步骤索引等信息，供后续 classify 和 reportFeedback 使用。
+     * 调用后会同步刷新会话的 lastActiveTime，避免被惰性清理。
+     *
+     * @param sessionId    会话 ID
+     * @param taskState    任务状态对象，可为 null（清除任务态）
+     */
     public void setTaskState(String sessionId, TaskStateVO taskState) {
-        /**
-         * 设置或更新会话的任务状态。
-         * <p>
-         * 通常由主流程（如多步诊断任务启动时）调用，用于记录当前进行中的意图、
-         * 步骤索引等信息，供后续 classify 和 reportFeedback 使用。
-         * 调用后会同步刷新会话的 lastActiveTime，避免被惰性清理。
-         *
-         * @param sessionId    会话 ID
-         * @param taskState    任务状态对象，可为 null（清除任务态）
-         */
         ConversationContextVO ctx = getContext(sessionId);
         ctx.setTaskState(taskState);
         ctx.setLastActiveTime(System.currentTimeMillis());

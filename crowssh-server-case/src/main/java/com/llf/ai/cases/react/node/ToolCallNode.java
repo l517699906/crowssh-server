@@ -6,6 +6,7 @@ import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.domain.agent.service.IChatContextService;
+import com.llf.ai.domain.agent.service.ILongTermMemoryService;
 import com.llf.ai.domain.agent.service.IPromptService;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
 import lombok.extern.slf4j.Slf4j;
@@ -61,6 +62,9 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
     @Resource
     private IChatContextService chatContextService;
+
+    @Resource
+    private ILongTermMemoryService longTermMemoryService;
 
     @Override
     protected ReActResultDTO doApply(ChatRequestDTO requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -216,9 +220,38 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
             promptService.detectAndRecordMilestone(dynamicContext.getSessionId(), "tool", resultContent);
             chatContextService.pushToolResult(dynamicContext.getSessionId(), toolName, resultContent);
 
+            if (longTermMemoryService != null) {
+                try {
+                    longTermMemoryService.saveToolMessage(
+                            dynamicContext.getUserId(),
+                            dynamicContext.getSessionId(),
+                            toolName,
+                            toolCallId,
+                            resultContent,
+                            "success".equals(status) && !isFailureContent(resultContent)
+                    );
+                } catch (RuntimeException e) {
+                    log.warn("保存手动工具消息与长期记忆失败 sessionId={}, tool={}",
+                            dynamicContext.getSessionId(), toolName, e);
+                }
+            }
+
             // 发送 tool_result SSE 事件
             sendToolResultEvent(dynamicContext, toolCallId, resultContent, status);
         }
+    }
+
+    private boolean isFailureContent(String content) {
+        if (content == null) {
+            return false;
+        }
+        String normalized = content.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("permission denied")
+                || normalized.contains("connection refused")
+                || normalized.contains("no such file")
+                || normalized.contains("not found")
+                || normalized.contains("failed")
+                || normalized.contains("error");
     }
 
     // ═══════════════════════════════════════════════════════════════

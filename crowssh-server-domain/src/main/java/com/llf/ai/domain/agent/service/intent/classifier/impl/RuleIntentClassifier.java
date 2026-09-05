@@ -100,6 +100,9 @@ public class RuleIntentClassifier implements IIntentClassifier {
      */
     private static final double COMPOUND_THRESHOLD = 0.5;
 
+    /**
+     * "继续"类关键词集合：命中后且去词剩余内容 ≤4 才视为纯 CONTINUE 指令
+     */
     private static final List<String> CONTINUE_KEYWORDS = List.of("继续", "continue", "接着", "往下", "go on");
 
     @Override
@@ -245,18 +248,18 @@ public class RuleIntentClassifier implements IIntentClassifier {
         return entities;
     }
 
+    /**
+     * 工厂方法：构建 IntentRuleVO 对象。
+     * <p>
+     * 在静态初始化块中为每条规则创建 IntentRuleVO 实例，避免在 classify 时重复构建。
+     *
+     * @param intent    意图类型
+     * @param keywords  关键词列表（用于快速匹配）
+     * @param patterns  正则表达式列表（用于精确模式匹配）
+     * @return 构建好的 IntentRuleVO 实例
+     */
     private static IntentRuleVO rule(IntentTypeEnumVO intent, List<String> keywords,
                                      List<String> patterns) {
-        /**
-         * 工厂方法：构建 IntentRuleVO 对象。
-         * <p>
-         * 在静态初始化块中为每条规则创建 IntentRuleVO 实例，避免在 classify 时重复构建。
-         *
-         * @param intent    意图类型
-         * @param keywords  关键词列表（用于快速匹配）
-         * @param patterns  正则表达式列表（用于精确模式匹配）
-         * @return 构建好的 IntentRuleVO 实例
-         */
         IntentRuleVO r = new IntentRuleVO();
         r.setIntent(intent);
         r.setKeywords(keywords);

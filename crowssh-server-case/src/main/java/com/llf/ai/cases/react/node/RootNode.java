@@ -6,6 +6,8 @@ import com.llf.ai.api.dto.ReActResultDTO;
 import com.llf.ai.cases.react.AbstractAIAgentReActSupport;
 import com.llf.ai.cases.react.config.ReActProperties;
 import com.llf.ai.cases.react.factory.DefaultReActFactory;
+import com.llf.ai.domain.agent.model.entity.ChatMessageEntity;
+import com.llf.ai.domain.agent.service.ILongTermMemoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -34,6 +36,9 @@ public class RootNode extends AbstractAIAgentReActSupport {
     @Resource
     private ReActProperties reactProperties;
 
+    @Resource
+    private ILongTermMemoryService longTermMemoryService;
+
     /** 墙钟起点时钟；可注入以便测试。 */
     private Clock clock = Clock.systemUTC();
 
@@ -46,7 +51,8 @@ public class RootNode extends AbstractAIAgentReActSupport {
         String userId = requestParameter.getUserId();
         String agentId = requestParameter.getAgentId();
         String terminalSessionId = requestParameter.getTerminalSessionId();
-        String message = requestParameter.getMessage();
+        // 空消息按空字符串处理，避免在日志、历史和提示构建阶段触发 NPE。
+        String message = requestParameter.getMessage() == null ? "" : requestParameter.getMessage();
 
         // 2. 绑定终端会话（ThreadLocal，支持异步线程继承）
         if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
@@ -56,6 +62,7 @@ public class RootNode extends AbstractAIAgentReActSupport {
             String boundTerminal = getTerminalSession(sessionId);
             if (boundTerminal != null) {
                 setCurrentTerminalSession(boundTerminal);
+                terminalSessionId = boundTerminal;
             }
         }
 
@@ -64,7 +71,31 @@ public class RootNode extends AbstractAIAgentReActSupport {
         dynamicContext.setUserId(userId);
         dynamicContext.setAgentId(agentId);
         dynamicContext.setTerminalSessionId(terminalSessionId);
-        dynamicContext.setMessageHistory(new java.util.ArrayList<>());
+        java.util.List<java.util.Map<String, Object>> history = new java.util.ArrayList<>();
+        java.util.List<ChatMessageEntity> recentMessages = longTermMemoryService == null
+                ? java.util.List.of()
+                : longTermMemoryService.getRecentMessages(userId, sessionId, 50);
+        if (recentMessages == null) {
+            recentMessages = java.util.List.of();
+        }
+        for (ChatMessageEntity messageEntity : recentMessages) {
+            if (messageEntity == null || messageEntity.getRole() == null) {
+                continue;
+            }
+            java.util.Map<String, Object> historyMessage = new java.util.LinkedHashMap<>();
+            historyMessage.put("role", messageEntity.getRole());
+            historyMessage.put("content", messageEntity.getContent() == null ? "" : messageEntity.getContent());
+            if ("tool".equals(messageEntity.getRole())) {
+                if (messageEntity.getToolCallId() != null) {
+                    historyMessage.put("tool_call_id", messageEntity.getToolCallId());
+                }
+                if (messageEntity.getToolName() != null) {
+                    historyMessage.put("name", messageEntity.getToolName());
+                }
+            }
+            history.add(historyMessage);
+        }
+        dynamicContext.setMessageHistory(history);
         dynamicContext.setCurrentToolCalls(new java.util.ArrayList<>());
         dynamicContext.setCurrentToolResults(new java.util.ArrayList<>());
         dynamicContext.setExecutedToolCalls(new java.util.ArrayList<>());

@@ -31,6 +31,11 @@ public class PromptContextVO {
     private String toolResultSummary;
 
     /**
+     * 长期记忆摘要（跨会话、结构化召回）
+     */
+    private String longTermMemorySummary;
+
+    /**
      * 当前任务描述（首条用户消息）
      */
     private String taskDescription;

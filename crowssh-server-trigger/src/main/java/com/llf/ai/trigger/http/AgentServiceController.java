@@ -124,20 +124,15 @@ public class AgentServiceController {
                                           Principal principal) {
         String ownerId = principal.getName();
         try {
-            log.info("智能体对话 agentId:{} userId:{}", requestDTO.getAgentId(), ownerId);
-            String sessionId = chatService.resolveSession(
-                    requestDTO.getAgentId(),
-                    ownerId,
-                    requestDTO.getSessionId(),
-                    requestDTO.getConnectionId(),
-                    requestDTO.getTerminalSessionId()
-            );
-
-            List<String> messages = chatService.handleMessage(
-                    requestDTO.getAgentId(), ownerId, sessionId, requestDTO.getMessage());
+            // 普通入口也必须经过 ReAct case，才能复用历史恢复、长期记忆召回和消息落库链路。
+            requestDTO.setUserId(ownerId);
+            log.info("ReAct 普通对话 agentId:{} userId:{} sessionId:{} connectionId:{} terminalSessionId:{}",
+                    requestDTO.getAgentId(), ownerId, requestDTO.getSessionId(),
+                    requestDTO.getConnectionId(), requestDTO.getTerminalSessionId());
+            String message = aiAgentReActServiceCase.chat(requestDTO);
 
             ChatResponseDTO responseDTO = new ChatResponseDTO();
-            responseDTO.setContent(String.join("\n", messages));
+            responseDTO.setContent(message);
 
             return Response.<ChatResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())

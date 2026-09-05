@@ -17,11 +17,11 @@ import java.util.Map;
  *                    （注入 List<ContextProvider>，@PostConstruct 按 order 排序）
  *                          |
  *   +----------+-----------+-----------+----------+
- *   |          |           |           |
- *   v          v           v           v
- * Terminal   Task     Milestone  ToolResult     （order: 10/20/30/40）
- * State      Provider Provider   Provider
- * (SSH环境)  (初始任务) (关键事件)  (工具摘要)
+ *   |          |           |           |          |
+ *   v          v           v           v          v
+ * Terminal   Task     Milestone  ToolResult      LongTermMemory     （order: 10/20/30/40）
+ * State      Provider Provider   Provider        Provider
+ * (SSH环境)  (初始任务) (关键事件)  (工具摘要)       (长期记忆)
  *   |          |           |           |
  *   +----------+-----------+-----------+
  *                          |
