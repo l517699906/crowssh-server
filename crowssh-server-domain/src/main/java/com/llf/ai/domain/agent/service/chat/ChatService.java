@@ -152,8 +152,19 @@ public class ChatService implements IChatService {
         ChatSessionBinding binding = sessionBindings.get(normalizedSessionId);
         if (binding != null) {
             // 已存在的绑定仍必须通过归属校验，不能把错误的用户/智能体/服务器 ID 当成“旧会话”恢复。
-            validateSessionBinding(normalizedSessionId, agentId, userId,
-                    resourceContext.connectionId(), resourceContext.terminalSessionId());
+            try {
+                validateSessionBinding(normalizedSessionId, agentId, userId,
+                        resourceContext.connectionId(), resourceContext.terminalSessionId());
+            } catch (IllegalArgumentException error) {
+                // 终端重连会让旧终端失效；此时旧 AI 会话不能复用，但可以安全地创建新会话。
+                if (!isStaleTerminalBinding(userId, binding.terminalSessionId(), resourceContext.terminalSessionId())) {
+                    throw error;
+                }
+                log.info("AI 会话绑定的旧终端已失效，创建新会话 oldSessionId={} oldTerminalSessionId={} newTerminalSessionId={}",
+                        normalizedSessionId, binding.terminalSessionId(), resourceContext.terminalSessionId());
+                invalidateSession(registerVO, userId, normalizedSessionId, binding);
+                return createSession(agentId, userId, resourceContext.connectionId(), resourceContext.terminalSessionId());
+            }
             if (adkSessionExists(registerVO.getRunner(), registerVO.getAppName(), userId, normalizedSessionId)) {
                 return normalizedSessionId;
             }
@@ -370,6 +381,20 @@ public class ChatService implements IChatService {
         }
     }
 
+    private boolean isStaleTerminalBinding(
+            String ownerId,
+            String oldTerminalSessionId,
+            String newTerminalSessionId
+    ) {
+        String oldId = normalize(oldTerminalSessionId);
+        String newId = normalize(newTerminalSessionId);
+        if (oldId == null || newId == null || Objects.equals(oldId, newId)) {
+            return false;
+        }
+        TerminalSessionEntity oldTerminal = sshTerminalService.getTerminalSession(ownerId, oldId);
+        return oldTerminal == null || !oldTerminal.isActive();
+    }
+
     private boolean adkSessionExists(Runner runner, String appName, String userId, String sessionId) {
         try {
             Session session = runner.sessionService()
@@ -447,6 +472,11 @@ public class ChatService implements IChatService {
         }
         if (resourceContext.terminalSessionId() != null && persistedTerminalSessionId != null
                 && !Objects.equals(resourceContext.terminalSessionId(), persistedTerminalSessionId)) {
+            if (isStaleTerminalBinding(userId, persistedTerminalSessionId, resourceContext.terminalSessionId())) {
+                log.info("持久化 AI 会话绑定的旧终端已失效，允许创建新会话 sessionId={} oldTerminalSessionId={} newTerminalSessionId={}",
+                        sessionId, persistedTerminalSessionId, resourceContext.terminalSessionId());
+                return false;
+            }
             throw new IllegalArgumentException("AI 会话不能切换到其他 SSH 终端");
         }
 

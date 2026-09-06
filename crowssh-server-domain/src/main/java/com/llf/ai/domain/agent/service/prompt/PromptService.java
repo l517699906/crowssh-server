@@ -60,7 +60,7 @@ public class PromptService implements IPromptService {
      * 内部完成两步：
      * <ol>
      *   <li>通过 {@link IChatContextService#buildPromptContext} 聚合上下文（终端环境、当前任务、里程碑、工具摘要）</li>
-     *   <li>调用 {@link DynamicPromptBuilder#buildMessagePrefix} 生成结构化前缀，拼在原始消息前面</li>
+     *   <li>调用 {@link DynamicPromptBuilder#buildMessageSuffix} 生成结构化前缀，拼在原始消息前面</li>
      * </ol>
      * 前缀为空（第一轮无历史）时直接返回原始用户消息。
      *
@@ -109,10 +109,10 @@ public class PromptService implements IPromptService {
         promptContextVO.setIntentLabel(intentLabel);
 
         // 2. 生成消息前缀
-        String prefix = dynamicPromptBuilder.buildMessagePrefix(promptContextVO);
-        String enrichedMessage = prefix.isEmpty()
+        String suffix = dynamicPromptBuilder.buildMessageSuffix(promptContextVO);
+        String enrichedMessage = suffix.isEmpty()
                 ? userMessage
-                : prefix + "\n---\n" + userMessage;
+                : userMessage + "\n---\n" + suffix;
 
         // 日志验证点：只记录上下文段是否注入及长度，不记录命令输出或完整 Prompt。
         log.info("[上下文管理] Prompt 注入: sessionId={}, ownerPresent={}, terminalPresent={}, "
@@ -124,7 +124,7 @@ public class PromptService implements IPromptService {
                 hasText(promptContextVO.getToolResultSummary()),
                 intentLabel == null ? "-" : intentLabel,
                 messageHistory == null ? 0 : messageHistory.size(),
-                prefix.length(),
+                suffix.length(),
                 enrichedMessage == null ? 0 : enrichedMessage.length());
 
         return enrichedMessage;

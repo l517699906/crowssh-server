@@ -127,8 +127,9 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
         } catch (Exception e) {
             Throwable cause = e.getCause();
-            log.error("ReAct 流式对话初始化失败: exceptionType={} causeType={}",
-                    e.getClass().getName(), cause == null ? "none" : cause.getClass().getName());
+            log.error("ReAct 流式对话初始化失败: exceptionType={} message={} causeType={}",
+                    e.getClass().getName(), e.getMessage(),
+                    cause == null ? "none" : cause.getClass().getName(), e);
             if (registeredSessionId != null) {
                 activeStreams.remove(registeredSessionId);
             }
@@ -254,7 +255,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             }
 
         } catch (Exception e) {
-            log.error("ReAct 普通对话异常: exceptionType={}", e.getClass().getName());
+            log.error("ReAct 普通对话异常: exceptionType={} message={}", e.getClass().getName(), e.getMessage(), e);
             return AGENT_EXECUTION_FAILURE_MESSAGE;
         } finally {
             requestDTO.clearRuntimeSecret();

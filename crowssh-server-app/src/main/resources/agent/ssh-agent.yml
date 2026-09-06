@@ -16,6 +16,8 @@ ai:
               embeddings-path: v1/embeddings
             chat-model:
               model: deepseek-v4-flash
+              # 推理强度；minimal、low、medium、high（仅推理模型生效，非推理模型忽略）
+              reasoning-effort: medium
               tool-mcp-list:
                 - local:
                     name: sshInspectionToolCallbackProvider

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.llf.ai.infrastructure.dao.IChatSessionDao">
+
+    <resultMap id="ChatSessionMap" type="com.llf.ai.infrastructure.dao.po.ChatSessionPO">
+        <id column="id" property="id"/>
+        <result column="agent_id" property="agentId"/>
+        <result column="user_id" property="userId"/>
+        <result column="connection_id" property="connectionId"/>
+        <result column="terminal_session_id" property="terminalSessionId"/>
+        <result column="title" property="title"/>
+        <result column="message_count" property="messageCount"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.llf.ai.infrastructure.dao.po.ChatSessionPO">
+        INSERT INTO chat_session (id, agent_id, user_id, connection_id, terminal_session_id, title, message_count)
+        VALUES (#{id}, #{agentId}, #{userId}, #{connectionId}, #{terminalSessionId}, #{title}, #{messageCount})
+    </insert>
+
+    <update id="updateSessionBinding">
+        UPDATE chat_session
+        SET connection_id = #{connectionId},
+            terminal_session_id = #{terminalSessionId},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{sessionId}
+          AND agent_id = #{agentId}
+          AND user_id = #{userId}
+    </update>
+
+    <update id="updateMessageCount">
+        UPDATE chat_session
+        SET message_count = message_count + 1
+        WHERE id = #{sessionId}
+    </update>
+
+    <select id="querySessionList" resultMap="ChatSessionMap">
+        SELECT id, agent_id, user_id, connection_id, terminal_session_id, title, message_count, created_at, updated_at
+        FROM chat_session
+        WHERE user_id = #{userId}
+        <if test="agentId != null and agentId != ''">AND agent_id = #{agentId}</if>
+        ORDER BY updated_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="findSession" resultMap="ChatSessionMap">
+        SELECT id, agent_id, user_id, connection_id, terminal_session_id, title, message_count, created_at, updated_at
+        FROM chat_session
+        WHERE id = #{sessionId}
+          AND agent_id = #{agentId}
+          AND user_id = #{userId}
+        LIMIT 1
+    </select>
+</mapper>

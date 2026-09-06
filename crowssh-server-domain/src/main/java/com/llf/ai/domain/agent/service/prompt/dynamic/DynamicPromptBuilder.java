@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * 翻译成模型可读的结构化文本，提供两种构建方式：
  * <ul>
  *   <li>{@link #build} —— 追加到 system instruction 末尾</li>
- *   <li>{@link #buildMessagePrefix} —— 构建为用户消息前缀（当前使用）</li>
+ *   <li>{@link #buildMessageSuffix} —— 构建为用户消息前缀（当前使用）</li>
  * </ul>
  *
  * @author llf
@@ -54,10 +54,10 @@ public class DynamicPromptBuilder {
     }
 
     /**
-     * 将动态上下文构建为用户消息前缀（注入到用户消息前面）。
+     * 将动态上下文构建为用户消息后缀（注入到用户消息后面，缓存友好）。
      * <p>
      * 适用于无法直接修改 system instruction 的场景——ADK Runner 的 system instruction
-     * 在 Agent 装配阶段就固定了，运行期改不了，因此把动态上下文拼在用户消息前面。
+     * 在 Agent 装配阶段就固定了，运行期改不了，因此把动态上下文拼在用户消息后面（保证前缀稳定，利于 Prompt Cache）。
      * <p>
      * 三类上下文"有才拼、没有不拼"：第一轮对话无历史时返回空串，不塞空标题浪费 token。
      * <p>
@@ -82,8 +82,11 @@ public class DynamicPromptBuilder {
      *
      *   返回：""  // 不返回空标题，避免浪费 token
      * </pre>
+     * <p>
+     * 缓存友好设计：动态上下文放在用户消息末尾，保证 system instruction + 历史消息 +
+     * 用户原始消息 这个前缀序列逐字节稳定，使 LLM Prompt Cache 能命中前面的稳定部分。
      */
-    public String buildMessagePrefix(PromptContextVO ctx) {
+    public String buildMessageSuffix(PromptContextVO ctx) {
         if (ctx == null) return "";
 
         StringBuilder sb = new StringBuilder();
@@ -140,9 +143,9 @@ public class DynamicPromptBuilder {
 
         if (!hasContent) return "";
 
-        String prefix = sb.toString();
-        log.debug("构建消息前缀，长度: {}", prefix.length());
-        return prefix;
+        String suffix = sb.toString();
+        log.debug("构建消息后缀，长度: {}", suffix.length());
+        return suffix;
     }
 
     /**
@@ -171,7 +174,7 @@ public class DynamicPromptBuilder {
      * 追加长期记忆段落（2-8 新增）。
      * <p>
      * 将 LongTermMemoryProvider 召回的长期记忆摘要渲染为 [长期记忆] 段落，
-     * 拼到用户消息前面，让主模型感知用户偏好、环境信息、软件版本、排查经验等。
+     * 拼到用户消息后面，让主模型感知用户偏好、环境信息、软件版本、排查经验等。
      */
     private void appendLongTermMemorySummary(StringBuilder sb, PromptContextVO ctx) {
         if (isEmpty(ctx.getLongTermMemorySummary())) {

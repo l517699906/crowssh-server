@@ -1,7 +1,6 @@
 package com.llf.ai.domain.agent.service.armory.matter.session;
 
 import com.google.adk.agents.BaseAgent;
-import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.runner.Runner;
 import com.llf.ai.domain.agent.service.IChatContextService;
@@ -16,13 +15,16 @@ public class ManagedRunnerFactory {
 
     private final IChatContextService chatContextService;
     private final IPromptService promptService;
+    private final CustomAdkMemoryService memoryService;
 
     public ManagedRunnerFactory(
             IChatContextService chatContextService,
-            IPromptService promptService
+            IPromptService promptService,
+            CustomAdkMemoryService memoryService
     ) {
         this.chatContextService = chatContextService;
         this.promptService = promptService;
+        this.memoryService = memoryService;
     }
 
     public Runner create(BaseAgent agent, String appName, List<? extends BasePlugin> plugins) {
@@ -35,7 +37,7 @@ public class ManagedRunnerFactory {
                 .agent(agent)
                 .appName(appName)
                 .sessionService(sessionService)
-                .memoryService(new InMemoryMemoryService())
+                .memoryService(memoryService)
                 .plugins(plugins)
                 .build();
     }

@@ -171,7 +171,7 @@ public class AgentServiceController {
             return aiAgentReActServiceCase.chatStream(requestDTO);
 
         } catch (Exception e) {
-            log.error("ReAct 流式对话初始化失败: exceptionType={}", e.getClass().getName());
+            log.error("ReAct 流式对话初始化失败: exceptionType={} message={}", e.getClass().getName(), e.getMessage(), e);
             ResponseBodyEmitter emitter = new ResponseBodyEmitter();
             emitter.completeWithError(new IllegalStateException(AGENT_INITIALIZATION_FAILURE_MESSAGE));
             return emitter;

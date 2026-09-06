@@ -175,7 +175,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             if (e instanceof CancellationException || Thread.currentThread().isInterrupted()) {
                 throw e;
             }
-            log.error("ADK Runner 调用失败: exceptionType={}", e.getClass().getName());
+            log.error("ADK Runner 调用失败: exceptionType={} message={}", e.getClass().getName(), e.getMessage(), e);
             hasError = true;
             dynamicContext.setErrorMessage(AGENT_EXECUTION_FAILURE_MESSAGE);
             dynamicContext.setStopReason("error");
