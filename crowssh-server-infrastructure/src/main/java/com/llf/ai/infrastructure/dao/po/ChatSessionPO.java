@@ -33,6 +33,8 @@ public class ChatSessionPO {
 
     /** 会话绑定的 SSH 终端会话 ID，可为空 */
     private String terminalSessionId;
+    private String dbConnectionId;
+    private String dbSessionId;
 
     /** 会话标题 */
     private String title;

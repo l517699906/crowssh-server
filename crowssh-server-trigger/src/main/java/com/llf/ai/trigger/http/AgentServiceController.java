@@ -21,6 +21,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/")
 public class AgentServiceController {
+    @org.springframework.beans.factory.annotation.Value("${crowssh.db.enabled:false}")
+    private boolean databaseEnabled;
 
     private static final String AGENT_INITIALIZATION_FAILURE_MESSAGE = "智能体初始化失败，请稍后重试。";
 
@@ -40,11 +42,14 @@ public class AgentServiceController {
 
             List<AiAgentConfigTableVO.Agent> agentConfigs = chatService.queryAiAgentConfigList();
 
-            List<AiAgentConfigResponseDTO> responseDTOS = agentConfigs.stream().map(agentConfig -> {
+            List<AiAgentConfigResponseDTO> responseDTOS = agentConfigs.stream()
+                    .filter(agentConfig -> databaseEnabled || !"DB".equals(agentConfig.getResourceKind()))
+                    .map(agentConfig -> {
                 AiAgentConfigResponseDTO responseDTO = new AiAgentConfigResponseDTO();
                 responseDTO.setAgentId(agentConfig.getAgentId());
                 responseDTO.setAgentName(agentConfig.getAgentName());
                 responseDTO.setAgentDesc(agentConfig.getAgentDesc());
+                responseDTO.setResourceKind(agentConfig.getResourceKind());
                 return responseDTO;
             }).collect(Collectors.toList());
 
@@ -78,7 +83,13 @@ public class AgentServiceController {
             log.info("创建会话 agentId:{} userId:{} connectionId:{} terminalSessionId:{}",
                     requestDTO.getAgentId(), ownerId, requestDTO.getConnectionId(),
                     requestDTO.getTerminalSessionId());
-            String sessionId = chatService.createSession(
+            boolean database = requestDTO.getDbConnectionId() != null || requestDTO.getDbSessionId() != null;
+            if (database && (!databaseEnabled || requestDTO.getConnectionId() != null || requestDTO.getTerminalSessionId() != null
+                    || requestDTO.getDbConnectionId() == null || requestDTO.getDbSessionId() == null)) {
+                throw new IllegalArgumentException("数据库功能未启用或资源绑定不完整、混合");
+            }
+            String sessionId = database ? chatService.createDatabaseSession(requestDTO.getAgentId(), ownerId,
+                    requestDTO.getDbConnectionId(), requestDTO.getDbSessionId()) : chatService.createSession(
                     requestDTO.getAgentId(),
                     ownerId,
                     requestDTO.getConnectionId(),
@@ -219,7 +230,7 @@ public class AgentServiceController {
     }
 
     @PostMapping("chat_stream/cancel")
-    public Response<Void> cancelChatStream(
+    public Response<ChatStreamCancelResponseDTO> cancelChatStream(
             @RequestBody ChatStreamCancelRequestDTO requestDTO,
             Principal principal
     ) {
@@ -227,16 +238,25 @@ public class AgentServiceController {
             if (requestDTO == null) {
                 throw new IllegalArgumentException("取消请求不能为空");
             }
-            aiAgentReActServiceCase.cancelStream(
+            ChatStreamCancelResponseDTO result;
+            if (requestDTO.getDbSessionId() != null || requestDTO.getTurnId() != null) {
+                if (requestDTO.getTerminalSessionId() != null) throw new IllegalArgumentException("取消请求不能混合 SSH 和数据库资源");
+                result = aiAgentReActServiceCase.cancelDatabaseStreamStatus(principal.getName(), requestDTO.getSessionId(),
+                        requestDTO.getDbSessionId(), requestDTO.getTurnId());
+            } else {
+                boolean active = aiAgentReActServiceCase.cancelStream(
                     principal.getName(),
                     requestDTO.getSessionId(),
                     requestDTO.getTerminalSessionId());
-            return Response.<Void>builder()
+                result = new ChatStreamCancelResponseDTO(active ? "CANCEL_REQUESTED" : "NOT_ACTIVE", List.of());
+            }
+            return Response.<ChatStreamCancelResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info("取消请求已处理")
+                    .data(result)
                     .build();
         } catch (IllegalArgumentException e) {
-            return Response.<Void>builder()
+            return Response.<ChatStreamCancelResponseDTO>builder()
                     .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
                     .info(e.getMessage())
                     .build();

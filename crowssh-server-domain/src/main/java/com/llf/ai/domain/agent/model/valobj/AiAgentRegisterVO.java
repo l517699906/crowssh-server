@@ -48,6 +48,8 @@ public class AiAgentRegisterVO {
      * 智能体描述
      */
     private String agentDesc;
+    @Builder.Default
+    private String resourceKind = "SSH";
 
     /**
      * 智能体执行对象

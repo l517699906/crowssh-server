@@ -16,6 +16,19 @@ public final class ToolExecutionObserverRegistry {
             new ConcurrentHashMap<>();
     private static final Map<String, CopyOnWriteArraySet<Observer>> APPROVAL_OBSERVERS =
             new ConcurrentHashMap<>();
+    private static final Map<String, CopyOnWriteArraySet<Observer>> DB_APPROVAL_OBSERVERS = new ConcurrentHashMap<>();
+
+    public static void registerDbApprovalObserver(String agentSessionId, Observer observer) {
+        register(agentSessionId, observer);
+        if (agentSessionId != null && !agentSessionId.isBlank() && observer != null) {
+            DB_APPROVAL_OBSERVERS.computeIfAbsent(agentSessionId, ignored -> new CopyOnWriteArraySet<>()).add(observer);
+        }
+    }
+
+    public static boolean hasDbApprovalObserver(String agentSessionId) {
+        var observers = agentSessionId == null ? null : DB_APPROVAL_OBSERVERS.get(agentSessionId);
+        return observers != null && !observers.isEmpty();
+    }
 
     private ToolExecutionObserverRegistry() {
     }
@@ -38,6 +51,11 @@ public final class ToolExecutionObserverRegistry {
 
     public static void unregister(String agentSessionId, Observer observer) {
         if (agentSessionId != null && !agentSessionId.isBlank() && observer != null) {
+            var dbObservers = DB_APPROVAL_OBSERVERS.get(agentSessionId);
+            if (dbObservers != null) {
+                dbObservers.remove(observer);
+                if (dbObservers.isEmpty()) DB_APPROVAL_OBSERVERS.remove(agentSessionId, dbObservers);
+            }
             CopyOnWriteArraySet<Observer> observers = OBSERVERS.get(agentSessionId);
             if (observers != null) {
                 observers.remove(observer);

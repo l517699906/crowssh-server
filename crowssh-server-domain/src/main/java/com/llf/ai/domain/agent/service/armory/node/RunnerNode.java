@@ -58,6 +58,7 @@ public class RunnerNode extends AbstractArmorySupport {
                 .agentId(agentId)
                 .agentName(agentName)
                 .agentDesc(agentDesc)
+                .resourceKind(agent.getResourceKind())
                 .runner(runner)
                 // 透传 Agent 的 API 配置与模型名，供意图识别等旁路能力复用（见 AiAgentRegisterVO）。这样就都统一了，都用一套LLM配置
                 .openAiApi(dynamicContext.getOpenAiApi())

@@ -8,6 +8,15 @@ crowssh:
     idle-timeout-millis: 1800000
     reap-interval-ms: 60000
     max-sessions-per-owner: 10
+  db:
+    session:
+      idle-timeout-millis: 1800000
+      reap-interval-ms: 60000
+      max-sessions-per-owner: 10
+      max-sessions-global: 50
+    egress:
+      allowed-private-hosts: 127.0.0.1,localhost
+      allowed-tunnel-targets: ""
   react:
     max-steps: 50
     max-tool-calls: 200

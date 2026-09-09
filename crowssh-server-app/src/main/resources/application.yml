@@ -1,6 +1,8 @@
 spring:
   config:
     name: ai-agent-scaffold-app
+    import:
+      - classpath:agent/db-agent.yml
   profiles:
     active: dev
   servlet:

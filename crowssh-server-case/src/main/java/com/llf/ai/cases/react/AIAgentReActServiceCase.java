@@ -14,6 +14,9 @@ import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionObserver
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelScope;
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelService;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
+import com.llf.ai.domain.db.service.session.DbSessionService;
+import com.llf.ai.domain.db.model.valobj.DbResourceBinding;
+import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
@@ -68,6 +71,12 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     @Resource
     private ISshTerminalService sshTerminalService;
 
+    @Resource
+    private DbSessionService dbSessionService;
+
+    @Value("${crowssh.db.enabled:false}")
+    private boolean databaseEnabled;
+
     @Resource(name = "sseStreamExecutor")
     private ExecutorService streamExecutor;
 
@@ -80,6 +89,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     public ResponseBodyEmitter chatStream(ChatRequestDTO requestDTO) {
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(0L);
         String registeredSessionId = null;
+        Runnable registeredCancel = null;
+        ActiveStream registeredStream = null;
 
         try {
             String sessionId = ensureSession(requestDTO);
@@ -89,6 +100,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
             AtomicBoolean streamActive = new AtomicBoolean(true);
             AtomicBoolean responseCompleted = new AtomicBoolean(false);
+            AtomicBoolean streamStarted = new AtomicBoolean(false);
             AtomicReference<Future<?>> streamFutureRef = new AtomicReference<>();
             DefaultReActFactory.DynamicContext dynamicContext = DefaultReActFactory.DynamicContext.builder()
                     .sessionId(sessionId)
@@ -97,18 +109,37 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     .streamActive(streamActive)
                     .build();
 
-            Runnable cancelStream = () -> cancelStreamInternal(
+            Runnable cancelStream = () -> {
+                cancelStreamInternal(
                     streamActive,
                     streamFutureRef,
                     requestDTO.getUserId(),
                     sessionId,
-                    requestDTO.getTerminalSessionId());
+                    requestDTO.getTerminalSessionId(), dynamicContext);
+                synchronized (dynamicContext) {
+                    if (!streamStarted.get()) {
+                        activeStreams.computeIfPresent(sessionId, (id, value) ->
+                                value.context() == dynamicContext ? null : value);
+                        requestDTO.clearRuntimeSecret();
+                    }
+                }
+            };
             ActiveStream activeStream = new ActiveStream(
-                    requestDTO.getUserId(), requestDTO.getTerminalSessionId(), cancelStream);
+                    requestDTO.getUserId(), requestDTO.getTerminalSessionId(), dynamicContext, cancelStream);
             if (activeStreams.putIfAbsent(sessionId, activeStream) != null) {
                 throw new IllegalStateException("该 AI 会话已有正在运行的流式请求");
             }
             registeredSessionId = sessionId;
+            registeredStream = activeStream;
+            registeredCancel = cancelStream;
+            if (requestDTO.isDatabaseRequest()) {
+                // 与取消共用上下文锁，取消先到时不再登记新轮次。
+                synchronized (dynamicContext) {
+                    if (!streamActive.get()) throw new CancellationException();
+                    dynamicContext.setDatabaseBinding(dbSessionService.beginAiTurn(requestDTO.getUserId(),
+                            requestDTO.getDbSessionId(), sessionId, java.util.UUID.randomUUID().toString()));
+                }
+            }
             registerEmitterCallbacks(
                     emitter,
                     sessionId,
@@ -121,9 +152,11 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     requestDTO,
                     dynamicContext,
                     responseCompleted,
+                    streamStarted,
                     cancelStream
             );
             streamFutureRef.set(streamExecutor.submit(streamTask));
+            if (!streamActive.get()) streamFutureRef.get().cancel(true);
 
         } catch (Exception e) {
             Throwable cause = e.getCause();
@@ -131,7 +164,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     e.getClass().getName(), e.getMessage(),
                     cause == null ? "none" : cause.getClass().getName(), e);
             if (registeredSessionId != null) {
-                activeStreams.remove(registeredSessionId);
+                if (registeredCancel != null) registeredCancel.run();
+                activeStreams.remove(registeredSessionId, registeredStream);
             }
             requestDTO.clearRuntimeSecret();
             emitter.completeWithError(new IllegalStateException(AGENT_INITIALIZATION_FAILURE_MESSAGE));
@@ -144,11 +178,16 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             ChatRequestDTO requestDTO,
             DefaultReActFactory.DynamicContext dynamicContext,
             AtomicBoolean responseCompleted,
+            AtomicBoolean streamStarted,
             Runnable cancelStream
     ) {
         String sessionId = dynamicContext.getSessionId();
         return () -> {
-            ScheduledFuture<?> heartbeatFuture = startHeartbeat(dynamicContext, cancelStream);
+            synchronized (dynamicContext) {
+                if (!dynamicContext.getStreamActive().get()) return;
+                streamStarted.set(true);
+            }
+            ScheduledFuture<?> heartbeatFuture = null;
             ToolExecutionObserverRegistry.Observer executionObserver = executionEvent -> {
                 dynamicContext.recordToolExecutionEvent(executionEvent);
                 if (!dynamicContext.getStreamActive().get()) {
@@ -162,10 +201,17 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     cancelStream.run();
                 }
             };
-            ToolExecutionObserverRegistry.registerApprovalObserver(sessionId, executionObserver);
+            if (dynamicContext.getDatabaseBinding() == null) {
+                ToolExecutionObserverRegistry.registerApprovalObserver(sessionId, executionObserver);
+            } else if (requestDTO.isSupportsDbApproval()) {
+                ToolExecutionObserverRegistry.registerDbApprovalObserver(sessionId, executionObserver);
+            } else {
+                ToolExecutionObserverRegistry.register(sessionId, executionObserver);
+            }
 
             try (RuntimeChatModelScope ignored = runtimeChatModelService.open(
                     toRuntimeModelConfig(requestDTO.getRuntimeModel()))) {
+                heartbeatFuture = startHeartbeat(dynamicContext, cancelStream);
                 streamEventPublisher.sendStatus(dynamicContext, "running", "正在处理请求");
                 ReActResultDTO result = rootNode.apply(requestDTO, dynamicContext);
 
@@ -205,9 +251,11 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 }
             } finally {
                 dynamicContext.getStreamActive().set(false);
-                heartbeatFuture.cancel(false);
+                stopDatabaseTurn(dynamicContext.getDatabaseBinding());
+                if (heartbeatFuture != null) heartbeatFuture.cancel(false);
                 ToolExecutionObserverRegistry.unregister(sessionId, executionObserver);
-                activeStreams.remove(sessionId);
+                activeStreams.computeIfPresent(sessionId, (id, value) ->
+                        value.context() == dynamicContext ? null : value);
                 requestDTO.clearRuntimeSecret();
             }
         };
@@ -225,11 +273,47 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             return false;
         }
         if (!activeStream.ownerId().equals(ownerId)
-                || !activeStream.terminalSessionId().equals(terminalSessionId)) {
+                || activeStream.context().getDatabaseBinding() != null
+                || !java.util.Objects.equals(activeStream.terminalSessionId(), terminalSessionId)) {
             throw new IllegalArgumentException("无权取消该 AI 流式会话");
         }
         activeStream.cancel().run();
         return true;
+    }
+
+    @Override
+    public boolean cancelDatabaseStream(String ownerId, String sessionId, String dbSessionId, String turnId) {
+        return "CANCEL_REQUESTED".equals(cancelDatabaseStreamStatus(ownerId, sessionId, dbSessionId, turnId).streamState());
+    }
+
+    @Override
+    public com.llf.ai.api.dto.ChatStreamCancelResponseDTO cancelDatabaseStreamStatus(
+            String ownerId, String sessionId, String dbSessionId, String turnId) {
+        if (ownerId == null || ownerId.isBlank() || sessionId == null || sessionId.isBlank()
+                || dbSessionId == null || dbSessionId.isBlank() || turnId == null || turnId.isBlank()) {
+            throw new IllegalArgumentException("取消请求缺少数据库会话或轮次");
+        }
+        ActiveStream stream = activeStreams.get(sessionId);
+        if (stream == null) return new com.llf.ai.api.dto.ChatStreamCancelResponseDTO("NOT_ACTIVE", java.util.List.of());
+        DbResourceBinding capturedBinding;
+        synchronized (stream.context()) {
+            DbResourceBinding binding = stream.context().getDatabaseBinding();
+            if (!ownerId.equals(stream.ownerId()) || binding == null || !dbSessionId.equals(binding.dbSessionId())) {
+                throw new IllegalArgumentException("无权取消该数据库 AI 流式会话");
+            }
+            if (!turnId.equals(binding.turnId())) return new com.llf.ai.api.dto.ChatStreamCancelResponseDTO("NOT_ACTIVE", java.util.List.of());
+            capturedBinding = binding;
+        }
+        stream.cancel().run();
+        java.util.List<com.llf.ai.api.dto.ChatStreamCancelResponseDTO.Execution> executions =
+                dbSessionService.aiTurnExecutions(capturedBinding).stream()
+                    // stopAiTurn 只标记当时未结束的执行；同轮已成功的历史不属于取消目标。
+                    .filter(com.llf.ai.domain.db.model.entity.DbExecutionEntity::isCancelRequested)
+                    .map(execution -> new com.llf.ai.api.dto.ChatStreamCancelResponseDTO.Execution(
+                            execution.getExecutionId(), execution.getState().name(),
+                            execution.getOutcome() == null ? null : execution.getOutcome().name(), execution.isCancelRequested()))
+                    .toList();
+        return new com.llf.ai.api.dto.ChatStreamCancelResponseDTO("CANCEL_REQUESTED", executions);
     }
 
     @Override
@@ -238,6 +322,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 requestDTO.getAgentId(), requestDTO.getUserId());
 
         try (RuntimeChatModelScope ignored = openOptionalRuntimeModel(requestDTO.getRuntimeModel())) {
+            if (requestDTO.isDatabaseRequest()) throw new IllegalArgumentException("数据库对话需要流式事件通道");
             String sessionId = ensureSession(requestDTO);
             DefaultReActFactory.DynamicContext dynamicContext = DefaultReActFactory.DynamicContext.builder()
                     .sessionId(sessionId)
@@ -263,6 +348,14 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     }
 
     private String ensureSession(ChatRequestDTO requestDTO) {
+        requestDTO.validateResourceBinding();
+        if (requestDTO.isDatabaseRequest()) {
+            if (!databaseEnabled) throw new IllegalArgumentException("数据库功能尚未启用");
+            String sessionId = chatService.resolveDatabaseSession(requestDTO.getAgentId(), requestDTO.getUserId(),
+                    requestDTO.getSessionId(), requestDTO.getDbConnectionId(), requestDTO.getDbSessionId());
+            requestDTO.setSessionId(sessionId);
+            return sessionId;
+        }
         String sessionId = chatService.resolveSession(
                 requestDTO.getAgentId(),
                 requestDTO.getUserId(),
@@ -315,21 +408,45 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             AtomicReference<Future<?>> streamFutureRef,
             String ownerId,
             String agentSessionId,
-            String terminalSessionId
+            String terminalSessionId,
+            DefaultReActFactory.DynamicContext context
     ) {
-        if (!streamActive.getAndSet(false)) {
-            return;
+        DbResourceBinding databaseBinding;
+        synchronized (context) {
+            if (!streamActive.getAndSet(false)) return;
+            databaseBinding = context.getDatabaseBinding();
         }
-        commandApprovalService.cancelSession(ownerId, agentSessionId);
         try {
-            sshTerminalService.cancelCommand(ownerId, terminalSessionId);
-        } catch (IllegalArgumentException e) {
-            log.debug("取消 AI SSH 命令时终端已结束 sessionId={} terminalSessionId={}",
-                    agentSessionId, terminalSessionId);
+            if (databaseBinding != null) {
+                stopDatabaseTurn(databaseBinding);
+            } else if (terminalSessionId != null) {
+                commandApprovalService.cancelSession(ownerId, agentSessionId);
+                try {
+                    sshTerminalService.cancelCommand(ownerId, terminalSessionId);
+                } catch (IllegalArgumentException e) {
+                    log.debug("取消 AI SSH 命令时终端已结束 sessionId={} terminalSessionId={}",
+                            agentSessionId, terminalSessionId);
+                }
+            }
+        } finally {
+            try {
+                Future<?> streamFuture = streamFutureRef.get();
+                if (streamFuture != null) streamFuture.cancel(true);
+            } finally {
+                // 主动停止也必须结束无限超时的响应；不能只停止后台任务。
+                context.getEmitter().complete();
+            }
         }
-        Future<?> streamFuture = streamFutureRef.get();
-        if (streamFuture != null) {
-            streamFuture.cancel(true);
+    }
+
+    private void stopDatabaseTurn(DbResourceBinding binding) {
+        if (binding == null) return;
+        try {
+            dbSessionService.stopAiTurn(binding, commandApprovalService.databaseApprovals());
+        } catch (Exception e) {
+            log.warn("数据库 AI 轮次清理失败 sessionId={} exceptionType={}", binding.agentSessionId(), e.getClass().getName());
+        } finally {
+            dbSessionService.endAiTurn(binding);
         }
     }
 
@@ -376,6 +493,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         );
     }
 
-    private record ActiveStream(String ownerId, String terminalSessionId, Runnable cancel) {
+    private record ActiveStream(String ownerId, String terminalSessionId,
+                                DefaultReActFactory.DynamicContext context, Runnable cancel) {
     }
 }

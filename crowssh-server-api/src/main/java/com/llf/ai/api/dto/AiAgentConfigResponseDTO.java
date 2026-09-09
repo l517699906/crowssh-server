@@ -25,4 +25,7 @@ public class AiAgentConfigResponseDTO {
      * 智能体描述
      */
     private String agentDesc;
+
+    /** 兼容的执行资源种类：SSH 或 DB。 */
+    private String resourceKind;
 }

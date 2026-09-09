@@ -63,6 +63,89 @@ public class ChatService implements IChatService {
     private IPromptService promptService;
 
     private final Map<String, ChatSessionBinding> sessionBindings = new ConcurrentHashMap<>();
+    @Resource
+    private com.llf.ai.domain.db.service.session.DbSessionService dbSessions;
+    private record DatabaseChatBinding(String agentId, String ownerId, String connectionId, String dbSessionId, long generation) { }
+    private final Map<String, DatabaseChatBinding> databaseBindings = new ConcurrentHashMap<>();
+
+    @Override
+    public void consumeDatabaseMessage(String agentId, com.llf.ai.domain.db.model.valobj.DbResourceBinding binding,
+            String message, String originalMessage, java.util.function.Consumer<Event> consumer) {
+        Objects.requireNonNull(consumer);
+        if (message == null || message.isBlank()) throw new IllegalArgumentException("聊天消息不能为空");
+        resolveDatabaseSession(agentId, binding.ownerId(), binding.agentSessionId(), binding.dbConnectionId(), binding.dbSessionId());
+        dbSessions.requireAiTurn(binding);
+        var agent = defaultArmoryFactory.getAiAgentRegisterVO(agentId);
+        Map<String, Object> delta = new HashMap<>();
+        delta.put("crowssh:ownerId", binding.ownerId());
+        delta.put("crowssh:resourceKind", "DB");
+        delta.put("crowssh:turnId", binding.turnId());
+        if (originalMessage != null) delta.put(ManagedSessionService.ORIGINAL_USER_MESSAGE_STATE_KEY, originalMessage);
+        RunConfig runConfig = RunConfig.builder().build();
+        // RunConfig 由本次服务端调用独占，跨线程工具从对象身份查找，不能使用历史 state 重建权限。
+        try (var scope = com.llf.ai.domain.agent.service.armory.matter.tools.AgentExecutionBinding.install(
+                new com.llf.ai.domain.agent.service.armory.matter.tools.AgentExecutionBinding.DbBinding(binding));
+             var invocation = com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseInvocationBindings.register(runConfig, binding)) {
+            Flowable<Event> events = agent.getRunner().runAsync(binding.ownerId(), binding.agentSessionId(),
+                    Content.fromParts(Part.fromText(message)), runConfig, delta);
+            withSessionGovernance(events, agent.getRunner(), agent.getAppName(), binding.ownerId(), binding.agentSessionId())
+                    .blockingForEach(event -> {
+                        if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("数据库聊天已取消");
+                        consumer.accept(event);
+                    });
+        } catch (RuntimeException error) { throw error; }
+        catch (Exception error) { throw new IllegalStateException("数据库调用清理失败", error); }
+    }
+
+    private DatabaseChatBinding databaseBinding(String agentId, String ownerId, String connectionId, String dbSessionId) {
+        var agent = defaultArmoryFactory.getAiAgentRegisterVO(agentId);
+        if (agent == null || !"DB".equals(agent.getResourceKind())) throw new IllegalArgumentException("智能体不支持数据库资源");
+        var session = dbSessions.requireSession(ownerId, dbSessionId);
+        synchronized (session) {
+            if (!Objects.equals(connectionId, session.getConnectionId())
+                    || session.getLifecycleStatus() != com.llf.ai.domain.db.model.valobj.DbSessionStatusEnum.READY) {
+                throw new IllegalArgumentException("数据库工作台绑定不匹配或尚未就绪");
+            }
+            return new DatabaseChatBinding(agentId, ownerId, connectionId, dbSessionId, session.getSessionGeneration());
+        }
+    }
+
+    @Override
+    public String createDatabaseSession(String agentId, String ownerId, String connectionId, String dbSessionId) {
+        DatabaseChatBinding binding = databaseBinding(agentId, ownerId, connectionId, dbSessionId);
+        var agent = defaultArmoryFactory.getAiAgentRegisterVO(agentId);
+        var session = agent.getRunner().sessionService().createSession(agent.getAppName(), ownerId,
+                Map.of("crowssh:ownerId", ownerId, "crowssh:resourceKind", "DB"), null).blockingGet();
+        if (session == null) throw new IllegalStateException("数据库聊天创建失败");
+        try {
+            if (!binding.equals(databaseBinding(agentId, ownerId, connectionId, dbSessionId))) {
+                throw new IllegalStateException("数据库工作台已变化");
+            }
+            chatHistoryRepository.saveSession(ChatSessionEntity.builder().id(session.id()).agentId(agentId)
+                    .userId(ownerId).dbConnectionId(connectionId).dbSessionId(dbSessionId).title("数据库对话").messageCount(0).build());
+            databaseBindings.put(session.id(), binding);
+            return session.id();
+        } catch (RuntimeException error) {
+            agent.getRunner().sessionService().deleteSession(agent.getAppName(), ownerId, session.id()).blockingAwait();
+            throw error;
+        }
+    }
+
+    @Override
+    public String resolveDatabaseSession(String agentId, String ownerId, String sessionId, String connectionId, String dbSessionId) {
+        if (normalize(sessionId) == null) return createDatabaseSession(agentId, ownerId, connectionId, dbSessionId);
+        DatabaseChatBinding requested = databaseBinding(agentId, ownerId, connectionId, dbSessionId);
+        DatabaseChatBinding existing = databaseBindings.get(sessionId);
+        if (existing == null || !existing.equals(requested)) {
+            throw new IllegalArgumentException("数据库聊天已失效或绑定不匹配，请新建对话");
+        }
+        var agent = defaultArmoryFactory.getAiAgentRegisterVO(agentId);
+        if (!adkSessionExists(agent.getRunner(), agent.getAppName(), ownerId, sessionId)) {
+            databaseBindings.remove(sessionId, existing);
+            throw new IllegalArgumentException("数据库聊天已失效，请新建对话");
+        }
+        return sessionId;
+    }
 
     @Override
     public List<AiAgentConfigTableVO.Agent> queryAiAgentConfigList() {
@@ -95,6 +178,10 @@ public class ChatService implements IChatService {
 
         if (null == aiAgentRegisterVO) {
             throw new AppException(ResponseCode.E0001.getCode());
+        }
+
+        if ("DB".equals(aiAgentRegisterVO.getResourceKind())) {
+            throw new IllegalArgumentException("数据库 Agent 必须通过数据库工作台绑定创建对话");
         }
 
         String appName = aiAgentRegisterVO.getAppName();
@@ -462,6 +549,9 @@ public class ChatService implements IChatService {
         }
         if (persisted == null) {
             return false;
+        }
+        if (persisted.getDbConnectionId() != null || persisted.getDbSessionId() != null) {
+            throw new IllegalArgumentException("数据库历史会话不能通过 SSH 恢复入口绑定资源，请重新打开数据库工作台");
         }
 
         String persistedConnectionId = normalize(persisted.getConnectionId());

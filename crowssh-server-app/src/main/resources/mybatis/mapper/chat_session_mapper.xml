@@ -8,6 +8,8 @@
         <result column="user_id" property="userId"/>
         <result column="connection_id" property="connectionId"/>
         <result column="terminal_session_id" property="terminalSessionId"/>
+        <result column="db_connection_id" property="dbConnectionId"/>
+        <result column="db_session_id" property="dbSessionId"/>
         <result column="title" property="title"/>
         <result column="message_count" property="messageCount"/>
         <result column="created_at" property="createdAt"/>
@@ -15,8 +17,10 @@
     </resultMap>
 
     <insert id="insert" parameterType="com.llf.ai.infrastructure.dao.po.ChatSessionPO">
-        INSERT INTO chat_session (id, agent_id, user_id, connection_id, terminal_session_id, title, message_count)
-        VALUES (#{id}, #{agentId}, #{userId}, #{connectionId}, #{terminalSessionId}, #{title}, #{messageCount})
+        INSERT INTO chat_session (id, agent_id, user_id, connection_id, terminal_session_id, title, message_count
+        <if test="dbConnectionId != null">, db_connection_id, db_session_id</if>)
+        VALUES (#{id}, #{agentId}, #{userId}, #{connectionId}, #{terminalSessionId}, #{title}, #{messageCount}
+        <if test="dbConnectionId != null">, #{dbConnectionId}, #{dbSessionId}</if>)
     </insert>
 
     <update id="updateSessionBinding">
@@ -36,7 +40,7 @@
     </update>
 
     <select id="querySessionList" resultMap="ChatSessionMap">
-        SELECT id, agent_id, user_id, connection_id, terminal_session_id, title, message_count, created_at, updated_at
+        SELECT *
         FROM chat_session
         WHERE user_id = #{userId}
         <if test="agentId != null and agentId != ''">AND agent_id = #{agentId}</if>
@@ -45,7 +49,7 @@
     </select>
 
     <select id="findSession" resultMap="ChatSessionMap">
-        SELECT id, agent_id, user_id, connection_id, terminal_session_id, title, message_count, created_at, updated_at
+        SELECT *
         FROM chat_session
         WHERE id = #{sessionId}
           AND agent_id = #{agentId}

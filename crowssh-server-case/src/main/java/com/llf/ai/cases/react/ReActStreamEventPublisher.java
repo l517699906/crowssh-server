@@ -90,6 +90,18 @@ public class ReActStreamEventPublisher {
         event.setApprovalId(executionEvent.getApprovalId());
         event.setRiskLevel(executionEvent.getRiskLevel());
 
+        Object resourceKind = executionEvent.getArguments().get("resourceKind");
+        if ("DB_SQL".equals(resourceKind) || "DB_METADATA".equals(resourceKind)) {
+            event.setResourceKind((String) resourceKind);
+            event.setTurnId((String) executionEvent.getArguments().get("turnId"));
+            event.setExecutionId((String) executionEvent.getArguments().get("executionId"));
+            if ("tool_approval_required".equals(event.getEvent())) {
+                event.setDatabaseApproval(executionEvent.getDatabaseApproval());
+            } else if ("tool_result".equals(event.getEvent())) {
+                event.setDatabaseResult(databasePreview(executionEvent));
+            }
+        }
+
         if ("tool_result".equals(event.getEvent())) {
             event.setCompletedAt(executionEvent.getCompletedAt());
             event.setDurationMs(executionEvent.getDurationMs());
@@ -110,6 +122,21 @@ public class ReActStreamEventPublisher {
         return event.getErrorMessage() == null || event.getErrorMessage().isBlank()
                 ? "工具执行失败。"
                 : event.getErrorMessage();
+    }
+
+    private java.util.Map<String, Object> databasePreview(ToolExecutionEvent event) {
+        // 领域事件已经经过 AI 输出策略；客户端卡片另限制为 20 行，不修改入模副本。
+        java.util.Map<String, Object> preview = objectMapper.convertValue(event.getResult(),
+                new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() { });
+        if (preview.get("result") instanceof java.util.Map<?, ?> raw) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> result = (java.util.Map<String, Object>) raw;
+            if (result.get("rows") instanceof java.util.List<?> rows && rows.size() > 20) {
+                result.put("rows", new java.util.ArrayList<>(rows.subList(0, 20)));
+                result.put("previewTruncated", true);
+            }
+        }
+        return preview;
     }
 
     public void sendRoundEnd(
@@ -174,6 +201,19 @@ public class ReActStreamEventPublisher {
             event.setSequence(sequence);
             event.setTimestamp(System.currentTimeMillis());
             event.setSessionId(context.getSessionId());
+            var binding = context.getDatabaseBinding();
+            if (binding != null) {
+                if (event.getResourceKind() == null) event.setResourceKind("DB");
+                event.setTurnId(binding.turnId());
+                java.util.Map<String, Object> snapshot = new java.util.LinkedHashMap<>();
+                snapshot.put("dbConnectionId", binding.dbConnectionId());
+                snapshot.put("dbSessionId", binding.dbSessionId());
+                snapshot.put("sessionGeneration", binding.sessionGeneration());
+                snapshot.put("configVersion", binding.configVersion());
+                snapshot.put("targetDatabase", binding.targetDatabase());
+                snapshot.put("targetContextVersion", binding.targetContextVersion());
+                event.setResourceSnapshot(snapshot);
+            }
             context.getEmitter().send(objectMapper.writeValueAsString(event) + "\n");
         }
     }

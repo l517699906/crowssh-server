@@ -293,6 +293,12 @@ public class LongTermMemoryService implements ILongTermMemoryService {
      */
     @Override
     public void saveToolMessage(String userId, String sessionId, String toolName, String toolCallId, String resultContent, boolean success) {
+        saveDatabaseToolMessage(userId, sessionId, toolName, toolCallId, resultContent);
+        recordToolObservation(userId, sessionId, toolName, resultContent, success);
+    }
+
+    @Override
+    public void saveDatabaseToolMessage(String userId, String sessionId, String toolName, String toolCallId, String resultContent) {
         if (isBlank(resultContent)) {
             return;
         }
@@ -309,7 +315,6 @@ public class LongTermMemoryService implements ILongTermMemoryService {
         } catch (Exception e) {
             log.warn("保存工具消息落库失败 sessionId={}, tool={}", sessionId, toolName, e);
         }
-        recordToolObservation(userId, sessionId, toolName, resultContent, success);
     }
 
     @Override

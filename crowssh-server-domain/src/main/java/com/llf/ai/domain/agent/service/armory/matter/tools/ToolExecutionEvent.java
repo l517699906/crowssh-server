@@ -21,6 +21,17 @@ public final class ToolExecutionEvent {
     private final String errorMessage;
     private final String approvalId;
     private final String riskLevel;
+    private Map<String, Object> databaseApproval = Map.of();
+
+    /** 仅供认证客户端审批展示，不进入通用工具参数、模型或历史。 */
+    public Map<String, Object> getDatabaseApproval() { return databaseApproval; }
+
+    public static ToolExecutionEvent databaseApprovalRequired(String toolCallId, Map<String, Object> safeArguments,
+            long startedAt, String approvalId, String riskLevel, Map<String, Object> details) {
+        ToolExecutionEvent event = approvalRequired(toolCallId, "executeQuery", safeArguments, startedAt, approvalId, riskLevel);
+        event.databaseApproval = immutableCopy(details);
+        return event;
+    }
 
     private ToolExecutionEvent(
             String toolCallId,

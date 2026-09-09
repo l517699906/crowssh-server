@@ -10,6 +10,17 @@ import io.reactivex.rxjava3.core.Flowable;
 import java.util.List;
 
 public interface IChatService {
+    default void consumeDatabaseMessage(String agentId, com.llf.ai.domain.db.model.valobj.DbResourceBinding binding,
+            String message, String originalMessage, java.util.function.Consumer<Event> consumer) {
+        throw new IllegalStateException("数据库聊天尚未配置");
+    }
+    default String createDatabaseSession(String agentId, String ownerId, String connectionId, String dbSessionId) {
+        throw new IllegalStateException("数据库聊天尚未配置");
+    }
+
+    default String resolveDatabaseSession(String agentId, String ownerId, String sessionId, String connectionId, String dbSessionId) {
+        throw new IllegalStateException("数据库聊天尚未配置");
+    }
 
     /**
      * 查询智能体配置列表
