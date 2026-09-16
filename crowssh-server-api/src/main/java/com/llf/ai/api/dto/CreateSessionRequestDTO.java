@@ -10,4 +10,6 @@ public class CreateSessionRequestDTO {
     private String connectionId;
 
     private String terminalSessionId;
+    private String dbConnectionId;
+    private String dbSessionId;
 }

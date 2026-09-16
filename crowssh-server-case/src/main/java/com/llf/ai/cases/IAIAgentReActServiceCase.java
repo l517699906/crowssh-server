@@ -37,6 +37,15 @@ public interface IAIAgentReActServiceCase {
      */
     boolean cancelStream(String ownerId, String sessionId, String terminalSessionId);
 
+    default boolean cancelDatabaseStream(String ownerId, String sessionId, String dbSessionId, String turnId) {
+        throw new IllegalArgumentException("数据库流式取消尚未启用");
+    }
+
+    default com.llf.ai.api.dto.ChatStreamCancelResponseDTO cancelDatabaseStreamStatus(
+            String ownerId, String sessionId, String dbSessionId, String turnId) {
+        throw new IllegalArgumentException("数据库流式取消状态尚未启用");
+    }
+
     /**
      * 普通对话（单轮，非流式）
      *

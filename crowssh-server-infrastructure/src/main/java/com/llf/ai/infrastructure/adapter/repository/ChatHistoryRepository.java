@@ -47,12 +47,18 @@ public class ChatHistoryRepository implements IChatHistoryRepository {
      */
     @Override
     public void saveSession(ChatSessionEntity session) {
+        boolean database = session.getDbConnectionId() != null || session.getDbSessionId() != null;
+        if (database && (session.getConnectionId() != null || session.getTerminalSessionId() != null
+                || session.getDbConnectionId() == null || session.getDbSessionId() == null)) {
+            throw new IllegalArgumentException("会话资源绑定必须完整且互斥");
+        }
         ChatSessionPO po = ChatSessionPO.builder()
                 .id(session.getId())
                 .agentId(session.getAgentId())
                 .userId(session.getUserId())
                 .connectionId(session.getConnectionId())
                 .terminalSessionId(session.getTerminalSessionId())
+                .dbConnectionId(session.getDbConnectionId()).dbSessionId(session.getDbSessionId())
                 .title(session.getTitle())
                 .messageCount(session.getMessageCount())
                 .build();
@@ -202,6 +208,7 @@ public class ChatHistoryRepository implements IChatHistoryRepository {
                 .userId(po.getUserId())
                 .connectionId(po.getConnectionId())
                 .terminalSessionId(po.getTerminalSessionId())
+                .dbConnectionId(po.getDbConnectionId()).dbSessionId(po.getDbSessionId())
                 .title(po.getTitle())
                 .messageCount(po.getMessageCount())
                 .createdAt(po.getCreatedAt() != null ? Timestamp.valueOf(po.getCreatedAt()) : null)

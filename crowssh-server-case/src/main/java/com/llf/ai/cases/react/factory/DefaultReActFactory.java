@@ -65,6 +65,8 @@ public class DefaultReActFactory {
 
         /** SSH 终端会话 ID */
         private String terminalSessionId;
+        /** 服务端生成的数据库本轮资源快照，不能从客户端请求直接赋值。 */
+        private com.llf.ai.domain.db.model.valobj.DbResourceBinding databaseBinding;
 
         /** SSE 事件发射器 */
         private ResponseBodyEmitter emitter;

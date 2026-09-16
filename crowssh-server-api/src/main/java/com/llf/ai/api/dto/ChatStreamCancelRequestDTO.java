@@ -10,4 +10,6 @@ public class ChatStreamCancelRequestDTO {
 
     private String sessionId;
     private String terminalSessionId;
+    private String dbSessionId;
+    private String turnId;
 }

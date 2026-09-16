@@ -28,6 +28,15 @@ crowssh:
     idle-timeout-millis: ${CROWSSH_SESSION_IDLE_TIMEOUT_MILLIS:1800000}
     reap-interval-ms: ${CROWSSH_SESSION_REAP_INTERVAL_MS:60000}
     max-sessions-per-owner: ${CROWSSH_SESSION_MAX_PER_OWNER:10}
+  db:
+    session:
+      idle-timeout-millis: ${CROWSSH_DB_IDLE_TIMEOUT_MILLIS:1800000}
+      reap-interval-ms: ${CROWSSH_DB_REAP_INTERVAL_MS:60000}
+      max-sessions-per-owner: ${CROWSSH_DB_MAX_SESSIONS_PER_OWNER:10}
+      max-sessions-global: ${CROWSSH_DB_MAX_SESSIONS_GLOBAL:50}
+    egress:
+      allowed-private-hosts: ${CROWSSH_DB_ALLOWED_PRIVATE_HOSTS:}
+      allowed-tunnel-targets: ${CROWSSH_DB_ALLOWED_TUNNEL_TARGETS:}
   # ReAct 循环护栏：步数 / 工具调用 / token 预算 / 墙钟超时
   react:
     max-steps: ${CROWSSH_REACT_MAX_STEPS:50}

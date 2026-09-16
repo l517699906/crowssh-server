@@ -3,7 +3,7 @@ package com.llf.ai.domain.agent.service.armory.matter.skills.impl;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.service.armory.matter.skills.ToolSkillsCreateService;
 import lombok.extern.slf4j.Slf4j;
-import org.springaicommunity.agent.tools.SkillsTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseCompatibleToolCallback;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
@@ -29,16 +29,12 @@ public class DefaultToolSkillsCreateService implements ToolSkillsCreateService {
         String path = toolSkills.getPath();
 
         if ("directory".equals(type)) {
-            return new ToolCallback[]{SkillsTool.builder()
-                    .addSkillsDirectory(requireDirectoryPath(path))
-                    .build()};
+            return new ToolCallback[]{DatabaseCompatibleToolCallback.skills(requireDirectoryPath(path))};
         }
 
         if ("resource".equals(type)) {
             Path materialized = materializeClasspathDirectory(path);
-            return new ToolCallback[]{SkillsTool.builder()
-                    .addSkillsDirectory(materialized.toString())
-                    .build()};
+            return new ToolCallback[]{DatabaseCompatibleToolCallback.skills(materialized.toString())};
         }
 
         throw new IllegalArgumentException("不支持的 Skills 类型: " + type);

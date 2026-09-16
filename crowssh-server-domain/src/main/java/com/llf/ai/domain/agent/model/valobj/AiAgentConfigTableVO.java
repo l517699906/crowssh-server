@@ -31,6 +31,8 @@ public class AiAgentConfigTableVO {
 
     @Data
     public static class Agent {
+        /** 可执行资源种类；旧配置默认 SSH，数据库配置显式 DB。 */
+        private String resourceKind = "SSH";
 
         /**
          * 智能体ID

@@ -113,7 +113,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         // 4. 显式绑定工具执行上下文。Spring AI 适配层不会向 ADK 工具传递 ToolContext。
         String terminalSessionId = dynamicContext.getTerminalSessionId();
-        SshExecuteAdkTool.setCurrentExecutionContext(
+        if (dynamicContext.getDatabaseBinding() == null) SshExecuteAdkTool.setCurrentExecutionContext(
                 requestParameter.getUserId(),
                 terminalSessionId,
                 requestParameter.getConnectionId(),
@@ -121,7 +121,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         );
 
         // 5. 构建动态上下文并注入用户消息
-        String enrichedMessage = buildEnrichedMessage(lastUserMessage, dynamicContext);
+        String enrichedMessage = dynamicContext.getDatabaseBinding() == null
+                ? buildEnrichedMessage(lastUserMessage, dynamicContext) : lastUserMessage;
         log.debug("注入动态上下文后消息长度: {} -> {}", lastUserMessage.length(), enrichedMessage.length());
 
         // 保存未经富化的用户消息，避免把动态环境/记忆前缀污染到持久化历史。
@@ -138,6 +139,17 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         log.info("调用 ADK Runner，用户消息长度: {}", lastUserMessage.length());
 
         try {
+            if (dynamicContext.getDatabaseBinding() != null) {
+                chatService.consumeDatabaseMessage(dynamicContext.getAgentId(), dynamicContext.getDatabaseBinding(),
+                        enrichedMessage, lastUserMessage, event -> {
+                            if (Thread.currentThread().isInterrupted()
+                                    || (dynamicContext.isStreaming() && !dynamicContext.getStreamActive().get())) {
+                                throw new CancellationException("流式连接已结束");
+                            }
+                            String eventText = extractTextContent(event);
+                            if (!eventText.isBlank()) textAccumulator.append(eventText);
+                        });
+            } else {
             Iterator<Event> events = chatService.handleEnrichedMessageStream(
                     dynamicContext.getAgentId(),
                     dynamicContext.getUserId(),
@@ -170,6 +182,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             }
 
             log.info("ADK Runner 事件流处理完成，共 {} 个事件", eventCount);
+            }
 
         } catch (Exception e) {
             if (e instanceof CancellationException || Thread.currentThread().isInterrupted()) {
@@ -420,6 +433,11 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             return;
         }
         try {
+            if (dynamicContext.getDatabaseBinding() != null) {
+                longTermMemoryService.saveDatabaseToolMessage(dynamicContext.getUserId(), dynamicContext.getSessionId(),
+                        toolName, toolCallId, resultContent);
+                return;
+            }
             longTermMemoryService.saveToolMessage(
                     dynamicContext.getUserId(),
                     dynamicContext.getSessionId(),
@@ -435,6 +453,13 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     }
 
     private boolean isSuccessfulToolEvent(ToolExecutionEvent event, String resultContent) {
+        Map<String, Object> result = event.getResult();
+        if ("DB_SQL".equals(result.get("resourceKind")) || "DB_METADATA".equals(result.get("resourceKind"))) {
+            return "success".equalsIgnoreCase(event.getStatus())
+                    && "FINISHED".equals(String.valueOf(result.get("state")))
+                    && "SUCCEEDED".equals(String.valueOf(result.get("outcome")))
+                    && Boolean.TRUE.equals(result.get("success"));
+        }
         String status = event.getStatus();
         if (status != null && ("error".equalsIgnoreCase(status)
                 || "failed".equalsIgnoreCase(status)

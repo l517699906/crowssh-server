@@ -17,6 +17,12 @@ import java.util.List;
 import java.util.Locale;
 
 final class OpenAiChatProtocolAdapter implements RuntimeModelProtocolAdapter {
+    private final java.util.function.Supplier<org.springframework.web.reactive.function.client.WebClient.Builder> webClient;
+
+    OpenAiChatProtocolAdapter() { this(org.springframework.web.reactive.function.client.WebClient::builder); }
+    OpenAiChatProtocolAdapter(java.util.function.Supplier<org.springframework.web.reactive.function.client.WebClient.Builder> webClient) {
+        this.webClient = webClient;
+    }
 
     static final String PROTOCOL = "openai-chat";
 
@@ -30,6 +36,7 @@ final class OpenAiChatProtocolAdapter implements RuntimeModelProtocolAdapter {
                            RuntimeModelConfig config,
                            List<ToolCallback> toolCallbacks) {
         OpenAiApi openAiApi = OpenAiApi.builder()
+                .webClientBuilder(webClient.get())
                 .baseUrl(connection.origin())
                 .apiKey(new NoopApiKey())
                 .headers(authHeaders(connection))

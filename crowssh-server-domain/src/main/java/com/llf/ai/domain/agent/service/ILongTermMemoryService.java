@@ -100,6 +100,11 @@ public interface ILongTermMemoryService {
      */
     void saveToolMessage(String userId, String sessionId, String toolName, String toolCallId, String resultContent, boolean success);
 
+    /** 数据库业务文本只保存为安全会话历史，不据其内容推断跨会话环境事实。 */
+    default void saveDatabaseToolMessage(String userId, String sessionId, String toolName, String toolCallId, String resultContent) {
+        throw new UnsupportedOperationException("数据库工具历史持久化尚未实现");
+    }
+
     /**
      * 按服务端认证后的归属主体加载会话历史，供 RootNode 冷启动恢复使用。
      */

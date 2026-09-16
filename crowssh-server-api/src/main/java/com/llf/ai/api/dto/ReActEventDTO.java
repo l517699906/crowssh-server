@@ -93,6 +93,14 @@ public class ReActEventDTO {
     /** 命令风险级别 */
     private String riskLevel;
 
+    /** 数据库事件的可选扩展，不复用 SSH command 字段。 */
+    private String resourceKind;
+    private String turnId;
+    private String executionId;
+    private java.util.Map<String, Object> resourceSnapshot;
+    private java.util.Map<String, Object> databaseApproval;
+    private java.util.Map<String, Object> databaseResult;
+
     /** ReAct 终止原因 */
     private String stopReason;
 

@@ -36,6 +36,9 @@ public class ChatSessionEntity {
 
     /** 会话绑定的 SSH 终端会话 ID，可为空 */
     private String terminalSessionId;
+    /** 数据库资源绑定，不能与 SSH 资源同时设置。 */
+    private String dbConnectionId;
+    private String dbSessionId;
 
     /** 会话标题（创建时默认"新会话"） */
     private String title;

@@ -69,6 +69,8 @@ CREATE TABLE `chat_session` (
                                 `user_id` varchar(64) NOT NULL COMMENT '用户ID',
                                 `connection_id` varchar(64) DEFAULT NULL COMMENT '绑定的 SSH 连接 ID',
                                 `terminal_session_id` varchar(64) DEFAULT NULL COMMENT '绑定的 SSH 终端会话 ID',
+                                `db_connection_id` varchar(64) DEFAULT NULL COMMENT '绑定的数据库连接 ID',
+                                `db_session_id` varchar(64) DEFAULT NULL COMMENT '绑定的数据库工作台会话 ID',
                                 `title` varchar(200) DEFAULT NULL COMMENT '会话标题',
                                 `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
                                 `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -76,6 +78,43 @@ CREATE TABLE `chat_session` (
                                 PRIMARY KEY (`id`),
                                 KEY `idx_user_agent` (`user_id`,`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='对话会话';
+
+
+# 转储表 db_connection
+# ------------------------------------------------------------
+
+DROP TABLE IF EXISTS `db_connection`;
+
+CREATE TABLE `db_connection` (
+                                `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+                                `connection_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '连接唯一标识(UUID)',
+                                `connection_name` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '连接名称',
+                                `db_type` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'MYSQL' COMMENT '数据库类型',
+                                `host` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '数据库网络地址',
+                                `port` int NOT NULL DEFAULT '3306' COMMENT '数据库端口',
+                                `username` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '数据库用户名',
+                                `password` text COLLATE utf8mb4_unicode_ci COMMENT 'AES-GCM 密文 v1:<keyId>:<base64>',
+                                `default_database` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '默认数据库',
+                                `ssl_mode` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'VERIFY_IDENTITY' COMMENT 'TLS 模式',
+                                `tls_server_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '证书身份，不是拨号地址',
+                                `ca_certificate_pem` text COLLATE utf8mb4_unicode_ci COMMENT '公共 CA 证书链',
+                                `tunnel_ssh_connection_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'SSH 隧道连接 ID',
+                                `connect_timeout` int NOT NULL DEFAULT '10' COMMENT '连接超时秒数',
+                                `query_timeout` int NOT NULL DEFAULT '60' COMMENT '查询超时秒数',
+                                `max_rows` int NOT NULL DEFAULT '1000' COMMENT '最大返回行数',
+                                `config_version` bigint NOT NULL DEFAULT '1' COMMENT '影响执行的配置版本',
+                                `ai_data_mode` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'METADATA_ONLY' COMMENT 'AI 数据模式',
+                                `ai_allowed_columns` json DEFAULT NULL COMMENT '精确 database/table/column 规则',
+                                `status` tinyint NOT NULL DEFAULT '0' COMMENT '状态',
+                                `user_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '设备身份 ID',
+                                `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                `deleted` tinyint NOT NULL DEFAULT '0' COMMENT '逻辑删除',
+                                PRIMARY KEY (`id`),
+                                UNIQUE KEY `uk_connection_id` (`connection_id`),
+                                KEY `idx_user_deleted` (`user_id`,`deleted`),
+                                KEY `idx_tunnel_connection` (`tunnel_ssh_connection_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据库连接配置';
 
 
 

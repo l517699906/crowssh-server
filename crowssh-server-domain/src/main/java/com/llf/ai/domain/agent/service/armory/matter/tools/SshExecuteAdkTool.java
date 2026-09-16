@@ -40,7 +40,10 @@ public class SshExecuteAdkTool {
     }
 
     // google-adk-spring-ai 1.2.0 转换工具时不会传递 ToolContext，因此由请求线程显式绑定执行资源。
-    private static final ThreadLocal<ExecutionBinding> currentExecutionBinding = new ThreadLocal<>();
+    private static ExecutionBinding currentBinding() {
+        if (!(AgentExecutionBinding.capture() instanceof AgentExecutionBinding.SshBinding binding)) return null;
+        return new ExecutionBinding(binding.ownerId(), binding.terminalSessionId(), binding.connectionId(), binding.agentSessionId());
+    }
 
     // 危险命令检测：命中后必须由当前流式会话的用户明确审批。
     private static final DangerousCommandDetector DANGEROUS_COMMAND_DETECTOR =
@@ -60,8 +63,8 @@ public class SshExecuteAdkTool {
                                                   String terminalSessionId,
                                                   String connectionId,
                                                   String agentSessionId) {
-        currentExecutionBinding.set(
-                new ExecutionBinding(ownerId, terminalSessionId, connectionId, agentSessionId));
+        AgentExecutionBinding.set(
+                new AgentExecutionBinding.SshBinding(ownerId, terminalSessionId, connectionId, agentSessionId));
         log.info("[ThreadLocal] 设置终端会话: thread={}, terminalSession={}",
                 Thread.currentThread().getName(), terminalSessionId);
     }
@@ -70,14 +73,14 @@ public class SshExecuteAdkTool {
      * 清除当前线程的终端会话 ID
      */
     public static void clearCurrentTerminalSession() {
-        currentExecutionBinding.remove();
+        AgentExecutionBinding.clear();
     }
 
     /**
      * 获取当前工具调用线程绑定的可信 SSH 上下文。
      */
     public static ExecutionBinding requireCurrentExecutionBinding() {
-        ExecutionBinding binding = currentExecutionBinding.get();
+        ExecutionBinding binding = currentBinding();
         if (binding == null
                 || binding.ownerId() == null || binding.ownerId().isBlank()
                 || binding.terminalSessionId() == null || binding.terminalSessionId().isBlank()
@@ -88,7 +91,7 @@ public class SshExecuteAdkTool {
     }
 
     static String currentAgentSessionId() {
-        ExecutionBinding binding = currentExecutionBinding.get();
+        AgentExecutionBinding.Resource binding = AgentExecutionBinding.capture();
         return binding == null ? null : binding.agentSessionId();
     }
 
@@ -121,7 +124,7 @@ public class SshExecuteAdkTool {
     public Map<String, Object> executeCommand(
             @Annotations.Schema(name = "command", description = "要执行的完整 Shell 命令；cd、export 等状态不会保留到下一次调用")
             String command) {
-        ExecutionBinding binding = currentExecutionBinding.get();
+        ExecutionBinding binding = currentBinding();
         String ownerId = binding == null ? null : binding.ownerId();
         String terminalSessionId = binding == null ? null : binding.terminalSessionId();
         TerminalSessionEntity terminalSession = terminalSessionId == null

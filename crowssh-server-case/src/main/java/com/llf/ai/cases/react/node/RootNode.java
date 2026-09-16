@@ -55,7 +55,10 @@ public class RootNode extends AbstractAIAgentReActSupport {
         String message = requestParameter.getMessage() == null ? "" : requestParameter.getMessage();
 
         // 2. 绑定终端会话（ThreadLocal，支持异步线程继承）
-        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
+        if (dynamicContext.getDatabaseBinding() != null) {
+            terminalSessionId = null;
+            clearCurrentTerminalSession();
+        } else if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
             setCurrentTerminalSession(terminalSessionId);
         } else {
             // 尝试从会话绑定中获取

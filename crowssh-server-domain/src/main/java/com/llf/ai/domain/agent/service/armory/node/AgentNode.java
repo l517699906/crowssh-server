@@ -13,6 +13,7 @@ import com.llf.ai.domain.agent.service.armory.AbstractArmorySupport;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
 import com.llf.ai.domain.agent.service.armory.matter.tools.SpringAiToolCallbackAdkAdapter;
+import com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseCompatibleToolCallback;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -32,6 +33,8 @@ public class AgentNode extends AbstractArmorySupport {
 
     @Resource
     private SshExecuteAdkTool sshExecuteAdkTool;
+    @Resource
+    private com.llf.ai.domain.agent.service.armory.matter.tools.DbQueryAdkTool dbQueryAdkTool;
 
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
@@ -46,14 +49,14 @@ public class AgentNode extends AbstractArmorySupport {
             LlmAgent.Builder builder  = LlmAgent.builder()
                     .name(agentConfig.getName())
                     .description(agentConfig.getDescription())
-                    .model(createAdkModel(chatModel))
+                    .model(createAdkModel(chatModel, aiAgentConfigTableVO.getAgent().getResourceKind()))
                     .instruction(agentConfig.getInstruction());
 
             if (agentConfig.getOutputKey() != null && !agentConfig.getOutputKey().isBlank()) {
                 builder.outputKey(agentConfig.getOutputKey());
             }
 
-            List<Object> adkTools = createAdkTools(dynamicContext.getToolCallbacks());
+            List<Object> adkTools = createAdkTools(dynamicContext.getToolCallbacks(), aiAgentConfigTableVO.getAgent().getResourceKind());
 
             // 注册工具到 Agent
             if (!adkTools.isEmpty()) {
@@ -72,18 +75,34 @@ public class AgentNode extends AbstractArmorySupport {
     }
 
     List<Object> createAdkTools(List<ToolCallback> toolCallbacks) {
-        Map<String, BaseTool> toolsByName = new LinkedHashMap<>();
+        return createAdkTools(toolCallbacks, "SSH");
+    }
 
-        FunctionTool sshTool = FunctionTool.create(sshExecuteAdkTool, "executeCommand");
-        addUnique(toolsByName, sshTool);
+    List<Object> createAdkTools(List<ToolCallback> toolCallbacks, String resourceKind) {
+        Map<String, BaseTool> toolsByName = new LinkedHashMap<>();
+        if ("DB".equals(resourceKind)) {
+            addUnique(toolsByName, FunctionTool.create(dbQueryAdkTool, "executeQuery"));
+        } else if ("SSH".equals(resourceKind)) {
+            addUnique(toolsByName, FunctionTool.create(sshExecuteAdkTool, "executeCommand"));
+        } else throw new IllegalArgumentException("不支持的 Agent 资源类型");
 
         if (toolCallbacks != null) {
             for (ToolCallback toolCallback : toolCallbacks) {
+                if ("DB".equals(resourceKind) && (!(toolCallback instanceof DatabaseCompatibleToolCallback)
+                        || !java.util.Set.of("Skill", "listDatabases", "listTables",
+                        "describeTable", "explainQuery", "inspectInstance", "inspectProcessList", "inspectLocks")
+                        .contains(toolCallback.getToolDefinition().name()))) {
+                    throw new IllegalArgumentException("数据库 Agent 不允许装配此工具");
+                }
                 addUnique(toolsByName, new SpringAiToolCallbackAdkAdapter(toolCallback));
             }
         }
 
         log.info("ADK 工具注册完成: count={}, names={}", toolsByName.size(), toolsByName.keySet());
+        if ("DB".equals(resourceKind)) {
+            return toolsByName.values().stream().map(tool -> (Object)
+                    new com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseBoundTool(tool)).toList();
+        }
         return List.copyOf(toolsByName.values());
     }
 
@@ -94,11 +113,14 @@ public class AgentNode extends AbstractArmorySupport {
         }
     }
 
-    private SpringAI createAdkModel(ChatModel chatModel) {
+    com.google.adk.models.BaseLlm createAdkModel(ChatModel chatModel, String resourceKind) {
         String modelName = chatModel.getClass().getSimpleName()
                 .toLowerCase()
                 .replace("chatmodel", "")
                 .replace("model", "");
+        if ("DB".equals(resourceKind)) {
+            return new com.llf.ai.domain.agent.service.model.DatabaseAdkModel(chatModel, modelName);
+        }
         return new SpringAI(chatModel, modelName, createAdkObservabilityConfig());
     }
 

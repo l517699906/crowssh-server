@@ -13,6 +13,12 @@ import java.time.Duration;
 import java.util.List;
 
 final class AnthropicMessagesProtocolAdapter implements RuntimeModelProtocolAdapter {
+    private final java.util.function.Supplier<org.springframework.web.reactive.function.client.WebClient.Builder> webClient;
+
+    AnthropicMessagesProtocolAdapter() { this(org.springframework.web.reactive.function.client.WebClient::builder); }
+    AnthropicMessagesProtocolAdapter(java.util.function.Supplier<org.springframework.web.reactive.function.client.WebClient.Builder> webClient) {
+        this.webClient = webClient;
+    }
 
     static final String PROTOCOL = "anthropic-messages";
     static final int DEFAULT_MAX_TOKENS = 4096;
@@ -28,6 +34,7 @@ final class AnthropicMessagesProtocolAdapter implements RuntimeModelProtocolAdap
                            RuntimeModelConfig config,
                            List<ToolCallback> toolCallbacks) {
         AnthropicApi anthropicApi = AnthropicApi.builder()
+                .webClientBuilder(webClient.get())
                 .baseUrl(connection.origin())
                 .completionsPath(connection.versionedEndpoint("v1", "v1/messages").getRawPath())
                 .apiKey(connection.apiKey())

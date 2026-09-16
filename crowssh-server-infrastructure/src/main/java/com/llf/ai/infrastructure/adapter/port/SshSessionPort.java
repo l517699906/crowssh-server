@@ -9,11 +9,14 @@ import com.llf.ai.infrastructure.security.SshOutboundPolicy;
 import lombok.extern.slf4j.Slf4j;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.connection.channel.direct.Session;
+import net.schmizz.sshj.connection.channel.direct.LocalPortForwarder;
+import net.schmizz.sshj.connection.channel.direct.Parameters;
 import net.schmizz.sshj.sftp.SFTPClient;
-import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -22,6 +25,7 @@ public class SshSessionPort implements ISshSessionPort {
 
     // 会话缓存：connectionId -> SSHClient
     private final ConcurrentHashMap<String, SSHClient> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, LocalForward> forwards = new ConcurrentHashMap<>();
     private final SshOutboundPolicy outboundPolicy;
 
     public SshSessionPort(SshOutboundPolicy outboundPolicy) {
@@ -86,6 +90,11 @@ public class SshSessionPort implements ISshSessionPort {
 
     @Override
     public synchronized void disconnect(String connectionId) {
+        forwards.values().stream()
+                .filter(forward -> forward.sshConnectionId().equals(connectionId))
+                .map(LocalForward::leaseId)
+                .toList()
+                .forEach(this::closeLocalForward);
         SSHClient sshClient = sessions.remove(connectionId);
         if (sshClient != null) {
             closeQuietly(sshClient);
@@ -97,6 +106,77 @@ public class SshSessionPort implements ISshSessionPort {
     public boolean isConnected(String connectionId) {
         SSHClient sshClient = sessions.get(connectionId);
         return sshClient != null && sshClient.isConnected() && sshClient.isAuthenticated();
+    }
+
+    /**
+     * 创建只绑定回环随机端口的本地转发。只返回不透明的基础设施句柄，数据库领域不接触 SSHJ 对象。
+     */
+    public synchronized LocalForward openLocalForward(String sshConnectionId,
+                                                       String destinationHost,
+                                                       int destinationPort) {
+        SSHClient sshClient = sessions.get(sshConnectionId);
+        if (sshClient == null || !sshClient.isConnected() || !sshClient.isAuthenticated()) {
+            throw new IllegalStateException("SSH 隧道依赖的连接不可用");
+        }
+        ServerSocket serverSocket = null;
+        try {
+            serverSocket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
+            Parameters parameters = new Parameters(
+                    "127.0.0.1", serverSocket.getLocalPort(), destinationHost, destinationPort);
+            LocalPortForwarder forwarder = sshClient.newLocalPortForwarder(parameters, serverSocket);
+            LocalForward forward = new LocalForward(
+                    "forward_" + java.util.UUID.randomUUID(),
+                    sshConnectionId,
+                    serverSocket.getLocalPort(),
+                    forwarder,
+                    serverSocket,
+                    new Thread[1]);
+            Thread listener = new Thread(() -> {
+                try {
+                    forwarder.listen(Thread.currentThread());
+                } catch (IOException | RuntimeException e) {
+                    log.warn("SSH 本地转发监听结束 leaseId={} exceptionType={}",
+                            forward.leaseId(), e.getClass().getSimpleName());
+                }
+            }, "crowssh-db-tunnel-" + forward.leaseId());
+            listener.setDaemon(true);
+            forward.thread()[0] = listener;
+            forwards.put(forward.leaseId(), forward);
+            listener.start();
+            return forward;
+        } catch (IOException | RuntimeException e) {
+            if (serverSocket != null) {
+                try {
+                    serverSocket.close();
+                } catch (IOException ignored) {
+                    // best effort cleanup
+                }
+            }
+            throw new IllegalStateException("创建 SSH 本地转发失败", e);
+        }
+    }
+
+    public synchronized void closeLocalForward(String leaseId) {
+        LocalForward forward = forwards.remove(leaseId);
+        if (forward == null) return;
+        try {
+            forward.forwarder().close();
+        } catch (IOException e) {
+            log.warn("关闭 SSH 本地转发失败 leaseId={} exceptionType={}",
+                    leaseId, e.getClass().getSimpleName());
+        }
+    }
+
+    public boolean isLocalForwardActive(String leaseId) {
+        LocalForward forward = forwards.get(leaseId);
+        return forward != null && !forward.serverSocket().isClosed()
+                && forward.thread()[0] != null && forward.thread()[0].isAlive()
+                && isConnected(forward.sshConnectionId());
+    }
+
+    public record LocalForward(String leaseId, String sshConnectionId, int localPort,
+                               LocalPortForwarder forwarder, ServerSocket serverSocket,
+                               Thread[] thread) {
     }
 
     /**
@@ -144,8 +224,8 @@ public class SshSessionPort implements ISshSessionPort {
             sshClient.connect(outboundPolicy.resolveAllowedAddress(connection.getHost()), connection.getPort());
 
             if (privateKey != null && !privateKey.isEmpty()) {
-                OpenSSHKeyFile keyFile = new OpenSSHKeyFile();
-                keyFile.init(privateKey, null, null);
+                // 由 SSHJ 按内容识别 OpenSSH v1/PEM 格式，不把现代 OpenSSH 私钥强制交给 PEM 解析器。
+                var keyFile = sshClient.loadKeys(privateKey, null, null);
                 sshClient.authPublickey(connection.getUsername(), keyFile);
             } else {
                 sshClient.authPassword(connection.getUsername(), password);

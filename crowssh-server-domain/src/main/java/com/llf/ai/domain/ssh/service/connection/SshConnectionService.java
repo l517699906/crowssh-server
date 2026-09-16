@@ -24,6 +24,17 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
 
     private final ISshConnectionRepository repository;
     private final ISshSessionPort sshSessionService;
+    private org.springframework.context.ApplicationEventPublisher events = event -> { };
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setEventPublisher(org.springframework.context.ApplicationEventPublisher events) {
+        this.events = events;
+    }
+
+    private void disconnectAndNotify(String ownerId, String connectionId) {
+        sshSessionService.disconnect(connectionId);
+        events.publishEvent(new com.llf.ai.domain.ssh.model.valobj.SshConnectionInvalidatedEvent(ownerId, connectionId));
+    }
 
     public SshConnectionService(ISshConnectionRepository repository, ISshSessionPort sshSessionService) {
         this.repository = repository;
@@ -107,7 +118,7 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
         repository.updateConnection(normalizedOwnerId, entity);
         repository.saveConnectionConfig(configEntity);
 
-        sshSessionService.disconnect(entity.getConnectionId());
+        disconnectAndNotify(normalizedOwnerId, entity.getConnectionId());
 
         log.info("SSH连接更新成功 connectionId={}", entity.getConnectionId());
     }
@@ -119,7 +130,7 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
         }
         String normalizedOwnerId = requireOwnerId(ownerId);
         requireOwnedConnection(normalizedOwnerId, connectionId);
-        sshSessionService.disconnect(connectionId);
+        disconnectAndNotify(normalizedOwnerId, connectionId);
         repository.deleteConnection(normalizedOwnerId, connectionId);
         log.info("SSH连接删除成功 connectionId={}", connectionId);
     }
@@ -175,7 +186,7 @@ public class SshConnectionService implements ISshConnectionService, ISshConnecti
         String normalizedOwnerId = requireOwnerId(ownerId);
         SshConnectionEntity entity = requireOwnedConnection(normalizedOwnerId, connectionId);
         // 1. 断开 SSH 连接
-        sshSessionService.disconnect(connectionId);
+        disconnectAndNotify(normalizedOwnerId, connectionId);
 
         // 2. 更新连接状态
         entity.setStatus(ConnectionStatusEnum.DISCONNECTED);

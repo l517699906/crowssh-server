@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 @Service
-public class RuntimeChatModelService {
+public class RuntimeChatModelService implements DisposableBean {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RuntimeChatModelService.class);
     static final String CAPABILITY_PROBE_TOOL_NAME = "crowsshCapabilityProbe";
@@ -127,6 +127,16 @@ public class RuntimeChatModelService {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final Map<String, RuntimeModelProtocolAdapter> adapters;
+    private final ModelHttpTransport modelHttpTransport = new ModelHttpTransport();
+
+    public org.springframework.web.reactive.function.client.WebClient.Builder modelWebClientBuilder() {
+        return modelHttpTransport.builder();
+    }
+
+    public void closeModelHttpTransport() { modelHttpTransport.close(); }
+
+    @Override
+    public void destroy() { closeModelHttpTransport(); }
 
     public RuntimeChatModelService() {
         this.httpClient = HttpClient.newBuilder()
@@ -135,8 +145,8 @@ public class RuntimeChatModelService {
                 .build();
         this.objectMapper = new ObjectMapper();
         this.adapters = List.<RuntimeModelProtocolAdapter>of(
-                        new OpenAiChatProtocolAdapter(),
-                        new AnthropicMessagesProtocolAdapter(),
+                        new OpenAiChatProtocolAdapter(this::modelWebClientBuilder),
+                        new AnthropicMessagesProtocolAdapter(this::modelWebClientBuilder),
                         new GeminiNativeProtocolAdapter()
                 ).stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(

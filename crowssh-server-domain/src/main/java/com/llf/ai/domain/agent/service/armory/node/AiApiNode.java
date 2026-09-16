@@ -18,6 +18,8 @@ public class AiApiNode extends AbstractArmorySupport {
 
     @Resource
     private ChatModelNode chatModelNode;
+    @Resource
+    private com.llf.ai.domain.agent.service.model.RuntimeChatModelService runtimeChatModelService;
 
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
@@ -27,6 +29,7 @@ public class AiApiNode extends AbstractArmorySupport {
         AiAgentConfigTableVO.Module.AiApi aiApiConfig = aiAgentConfigTableVO.getModule().getAiApi();
 
         OpenAiApi openAiApi = OpenAiApi.builder()
+                .webClientBuilder(runtimeChatModelService.modelWebClientBuilder())
                 .baseUrl(aiApiConfig.getBaseUrl())
                 .apiKey(aiApiConfig.getApiKey())
                 .completionsPath(StringUtils.isNoneBlank(aiApiConfig.getCompletionsPath()) ? aiApiConfig.getCompletionsPath() : "/v1/chat/completions")

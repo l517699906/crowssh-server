@@ -24,6 +24,22 @@ public class CommandApprovalService {
     private static final int MAX_PENDING_APPROVALS = 1_000;
 
     private final Map<String, PendingApproval> approvals = new ConcurrentHashMap<>();
+    private final com.llf.ai.domain.db.service.session.DbApprovalRegistry dbApprovals;
+
+    public CommandApprovalService() {
+        this(new com.llf.ai.domain.db.config.DbSessionGovernanceProperties());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public CommandApprovalService(com.llf.ai.domain.db.config.DbSessionGovernanceProperties properties) {
+        dbApprovals = new com.llf.ai.domain.db.service.session.DbApprovalRegistry(java.time.Clock.systemUTC(),
+                properties.getApproval().getMaxPendingPerOwner(), MAX_PENDING_APPROVALS);
+    }
+
+    /** SQL 审批使用独立的资源快照和消费状态，不复用 terminalSessionId。 */
+    public com.llf.ai.domain.db.service.session.DbApprovalRegistry databaseApprovals() {
+        return dbApprovals;
+    }
 
     public ApprovalTicket request(
             String ownerId,

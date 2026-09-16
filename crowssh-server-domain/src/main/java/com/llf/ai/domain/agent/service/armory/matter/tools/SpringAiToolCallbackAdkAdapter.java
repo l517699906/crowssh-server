@@ -42,7 +42,21 @@ public final class SpringAiToolCallbackAdkAdapter extends BaseTool {
 
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
-        return Single.fromCallable(() -> invokeWithEvents(args, toolContext));
+        AgentExecutionBinding.Resource binding = AgentExecutionBinding.capture();
+        return Single.fromCallable(() -> {
+            try (var ignored = AgentExecutionBinding.install(binding)) {
+                if (binding instanceof AgentExecutionBinding.DbBinding) {
+                    // DB 专用服务负责带 executionId 的安全事件，避免通用事件重复回显 SQL 参数。
+                    try {
+                        return parseOutput(invoke(args, toolContext));
+                    } catch (Exception error) {
+                        log.warn("数据库工具回调失败: tool={} exceptionType={}", name(), error.getClass().getName());
+                        return Map.of("success", false, "message", TOOL_EXECUTION_FAILURE_MESSAGE);
+                    }
+                }
+                return invokeWithEvents(args, toolContext);
+            }
+        });
     }
 
     private Map<String, Object> invokeWithEvents(
