@@ -13,6 +13,7 @@ import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import com.llf.ai.domain.agent.service.armory.matter.session.ManagedRunnerFactory;
 import com.llf.ai.types.enums.ResponseCode;
 import com.llf.ai.types.exception.AppException;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.NonNull;
@@ -33,6 +34,7 @@ public class RunnerNode extends AbstractArmorySupport {
 
     private final ManagedRunnerFactory managedRunnerFactory;
 
+
     public RunnerNode(ManagedRunnerFactory managedRunnerFactory) {
         this.managedRunnerFactory = managedRunnerFactory;
     }
@@ -51,6 +53,7 @@ public class RunnerNode extends AbstractArmorySupport {
 
         // Runner 运行体
         Runner runner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
+
 
         // 构建注册对象
         AiAgentRegisterVO aiAgentRegisterVO = AiAgentRegisterVO.builder()

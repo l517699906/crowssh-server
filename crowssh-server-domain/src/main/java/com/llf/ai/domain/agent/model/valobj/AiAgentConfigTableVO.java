@@ -140,7 +140,9 @@ public class AiAgentConfigTableVO {
             private String instruction;
             private String description;
             private String outputKey;
-
+            /** 子任务只读能力，默认 false；开启后只装配固定只读工具。 */
+            private boolean readOnly;
+            private List<String> subAgents;
         }
 
         @Data

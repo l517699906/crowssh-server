@@ -28,7 +28,7 @@ record RuntimeModelConnection(String provider,
                     null
             ).toString();
         } catch (URISyntaxException error) {
-            throw new IllegalArgumentException("服务地址必须是有效的 HTTPS 地址");
+            throw new IllegalArgumentException("服务地址必须是有效的 HTTP 或 HTTPS 地址");
         }
     }
 

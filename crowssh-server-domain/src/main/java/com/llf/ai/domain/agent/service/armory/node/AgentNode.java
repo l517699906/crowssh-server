@@ -1,6 +1,7 @@
 package com.llf.ai.domain.agent.service.armory.node;
 
 import cn.bugstack.wrench.design.framework.tree.StrategyHandler;
+import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.models.springai.SpringAI;
 import com.google.adk.models.springai.properties.SpringAIProperties;
@@ -10,16 +11,16 @@ import com.llf.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.llf.ai.domain.agent.service.armory.AbstractArmorySupport;
+import com.llf.ai.domain.agent.service.armory.catalog.AgentCatalog;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SpringAiToolCallbackAdkAdapter;
-import com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseCompatibleToolCallback;
+import com.llf.ai.domain.agent.service.armory.matter.tools.*;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,17 @@ public class AgentNode extends AbstractArmorySupport {
     @Resource
     private SshExecuteAdkTool sshExecuteAdkTool;
     @Resource
-    private com.llf.ai.domain.agent.service.armory.matter.tools.DbQueryAdkTool dbQueryAdkTool;
+    private DbQueryAdkTool dbQueryAdkTool;
+
+    @Resource
+    private AgentCatalog agentCatalog;
+
+    @Resource
+    private DynamicAgentOrchestrator dynamicAgentOrchestrator;
+
+    private static final java.util.Set<String> READ_ONLY_TOOLS = java.util.Set.of(
+            "inspectSystem", "inspectDisk", "inspectNetwork", "inspectService",
+            "listRemoteFiles", "readRemoteText", "statRemotePath", "compareRemoteTexts");
 
     @Override
     protected AiAgentRegisterVO doApply(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
@@ -43,35 +54,71 @@ public class AgentNode extends AbstractArmorySupport {
         ChatModel chatModel = dynamicContext.getChatModel();
 
         AiAgentConfigTableVO aiAgentConfigTableVO = requestParameter.getAiAgentConfigTableVO();
+        String resourceKind = aiAgentConfigTableVO.getAgent().getResourceKind();
         List<AiAgentConfigTableVO.Module.Agent> agents = aiAgentConfigTableVO.getModule().getAgents();
 
-        for ( AiAgentConfigTableVO.Module.Agent agentConfig : agents ) {
-            LlmAgent.Builder builder  = LlmAgent.builder()
-                    .name(agentConfig.getName())
-                    .description(agentConfig.getDescription())
-                    .model(createAdkModel(chatModel, aiAgentConfigTableVO.getAgent().getResourceKind()))
-                    .instruction(agentConfig.getInstruction());
-
-            if (agentConfig.getOutputKey() != null && !agentConfig.getOutputKey().isBlank()) {
-                builder.outputKey(agentConfig.getOutputKey());
-            }
-
-            List<Object> adkTools = createAdkTools(dynamicContext.getToolCallbacks(), aiAgentConfigTableVO.getAgent().getResourceKind());
-
-            // 注册工具到 Agent
-            if (!adkTools.isEmpty()) {
-                log.info("为 Agent [{}] 注册 {} 个工具", agentConfig.getName(), adkTools.size());
-                builder.tools(adkTools);
-            } else {
-                log.warn("Agent [{}] 没有注册任何工具！", agentConfig.getName());
-            }
-
-            LlmAgent llmAgent = builder.build();
-
-            dynamicContext.getAgentGroup().put(agentConfig.getName(), llmAgent);
+        Map<String, AiAgentConfigTableVO.Module.Agent> configs = new LinkedHashMap<>();
+        for (var config : agents) {
+            if (config.getName() == null || configs.putIfAbsent(config.getName(), config) != null)
+                throw new IllegalArgumentException("Agent 名称缺失或重复");
         }
-
+        for (var config : agents) {
+            List<Object> tools = configuredTools(dynamicContext.getToolCallbacks(), resourceKind, config.isReadOnly(), false);
+            List<String> children = config.getSubAgents();
+            if (children != null && !children.isEmpty()) {
+                // DB 的轮次、独立 lane 和审批不能复用 SSH 子任务作用域。
+                if (!"SSH".equals(resourceKind))
+                    throw new IllegalArgumentException("当前仅 SSH Agent 支持子任务派发");
+                Map<String, BaseAgent> childAgents = new LinkedHashMap<>();
+                java.util.Set<String> readOnly = new java.util.HashSet<>();
+                for (String name : children) {
+                    var child = configs.get(name);
+                    if (child == null || name.equals(config.getName()) || childAgents.containsKey(name)
+                            || (child.getSubAgents() != null && !child.getSubAgents().isEmpty()))
+                        throw new IllegalArgumentException("子 Agent 必须存在、唯一且不再派发: " + name);
+                    childAgents.put(name, buildAgent(child, chatModel, resourceKind,
+                            configuredTools(dynamicContext.getToolCallbacks(), resourceKind, child.isReadOnly(), true)));
+                    if (child.isReadOnly()) readOnly.add(name);
+                }
+                String agentId = aiAgentConfigTableVO.getAgent().getAgentId();
+                agentCatalog.register(agentId, config.getName(), childAgents, readOnly);
+                var batch = new BatchSubAgentDispatchTool(agentId, config.getName(), children, dynamicAgentOrchestrator);
+                tools.add(batch);
+                for (String name : children)
+                    tools.add(new SubAgentDispatchTool(name, configs.get(name).getDescription(), batch));
+            }
+            // 业务工具和派发工具一起构建，保留统一模型适配及观测配置。
+            Map<String, BaseTool> unique = new LinkedHashMap<>();
+            for (Object tool : tools) addUnique(unique, (BaseTool) tool);
+            dynamicContext.getAgentGroup().put(config.getName(), buildAgent(config, chatModel, resourceKind, List.copyOf(unique.values())));
+        }
         return router(requestParameter, dynamicContext);
+    }
+
+    private LlmAgent buildAgent(AiAgentConfigTableVO.Module.Agent config, ChatModel model, String resourceKind, List<?> tools) {
+        var builder = LlmAgent.builder()
+                .name(config.getName())
+                .description(config.getDescription())
+                .model(createAdkModel(model, resourceKind))
+                .instruction(config.getInstruction())
+                .tools(tools);
+        if (config.getOutputKey() != null && !config.getOutputKey().isBlank()) builder.outputKey(config.getOutputKey());
+        return builder.build();
+    }
+
+    List<Object> configuredTools(List<ToolCallback> callbacks, String resourceKind, boolean readOnly, boolean child) {
+        List<Object> tools = new ArrayList<>();
+        for (Object tool : createAdkTools(callbacks, resourceKind)) {
+            BaseTool baseTool = (BaseTool) tool;
+            if (readOnly) {
+                boolean allowed = "SSH".equals(resourceKind) ? READ_ONLY_TOOLS.contains(baseTool.name())
+                        : java.util.Set.of("listDatabases", "listTables", "describeTable", "explainQuery",
+                                "inspectInstance", "inspectProcessList", "inspectLocks").contains(baseTool.name());
+                if (!allowed) continue;
+            }
+            tools.add(child ? new SubAgentGuardedTool(baseTool) : baseTool);
+        }
+        return tools;
     }
 
     List<Object> createAdkTools(List<ToolCallback> toolCallbacks) {

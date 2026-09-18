@@ -121,7 +121,6 @@ public class LLMIntentClassifier implements IIntentClassifier {
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
                         .model(modelName)
-                        .temperature(0.1) // 意图识别需要更确定的结果
                         .build())
                 .build();
     }

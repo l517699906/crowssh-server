@@ -74,7 +74,7 @@ public class ChatModelNode extends AbstractArmorySupport {
         // 构建对话模型
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .model(chatModelConfig.getModel())
-                .toolCallbacks(toolCallbackList)
+                // 工具只从当前 ADK Agent 注入，避免默认工具绕过子 Agent 白名单。
                 // 开启流式 usage 统计：OpenAI 协议要求 stream_options.include_usage=true，
                 // 末块才返回完整 usage（含 prompt_tokens_details.cached_tokens 缓存命中）。
                 .streamUsage(true);

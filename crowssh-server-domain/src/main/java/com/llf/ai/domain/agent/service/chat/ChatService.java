@@ -12,6 +12,7 @@ import com.llf.ai.domain.agent.model.entity.ChatMessageEntity;
 import com.llf.ai.domain.agent.model.entity.ChatSessionEntity;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.model.valobj.AiAgentRegisterVO;
+import com.llf.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
 import com.llf.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigProperties;
 import com.llf.ai.domain.agent.service.IChatService;
 import com.llf.ai.domain.agent.service.IChatContextService;
@@ -61,6 +62,9 @@ public class ChatService implements IChatService {
 
     @Resource
     private IPromptService promptService;
+
+    /** 业务会话 ID -> SSH 终端会话 ID 绑定关系，用于派发子 Agent 时透传终端上下文 */
+    private final Map<String, String> sessionTerminalContext = new ConcurrentHashMap<>();
 
     private final Map<String, ChatSessionBinding> sessionBindings = new ConcurrentHashMap<>();
     @Resource
@@ -270,6 +274,18 @@ public class ChatService implements IChatService {
         return createSession(agentId, userId, resourceContext.connectionId(), resourceContext.terminalSessionId());
     }
 
+    /** 建立/更新业务会话与 SSH 终端会话的绑定关系（供后续消息流式处理时回填） */
+    public void bindTerminalSession(String sessionId, String terminalSessionId) {
+        if (sessionId != null && !sessionId.isBlank() && terminalSessionId != null && !terminalSessionId.isBlank()) {
+            sessionTerminalContext.put(sessionId, terminalSessionId);
+        }
+    }
+
+    /** 查询业务会话绑定的 SSH 终端会话 ID，未绑定时返回 Optional.empty() */
+    public Optional<String> getTerminalSession(String sessionId) {
+        return Optional.ofNullable(sessionTerminalContext.get(sessionId));
+    }
+
     @Override
     public List<String> handleMessage(String agentId, String userId, String message) {
 
@@ -309,6 +325,25 @@ public class ChatService implements IChatService {
         events.blockingForEach(event -> outputs.add(event.stringifyContent()));
 
         return outputs;
+    }
+
+    /**
+     * 带执行上下文的兼容入口：校验身份和资源，再以可恢复作用域调用标准消息处理。
+     */
+    public List<String> handleMessage(String agentId, String userId, String sessionId, String message,
+                                      AgentExecutionContext context) {
+        if (context == null) return handleMessage(agentId, userId, sessionId, message);
+        if (!Objects.equals(userId, context.getUserId()) || !Objects.equals(sessionId, context.getParentSessionId()))
+            throw new IllegalArgumentException("执行上下文与聊天身份不一致");
+        SshResourceContext resource = resolveResourceContext(userId, context.getConnectionId(), context.getTerminalSessionId());
+        try (var scope = SshExecuteAdkTool.executionScope(new SshExecuteAdkTool.ExecutionBinding(
+                userId, resource.terminalSessionId(), resource.connectionId(), sessionId))) {
+            return handleMessage(agentId, userId, sessionId, message);
+        } catch (RuntimeException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalStateException("释放执行上下文失败", error);
+        }
     }
 
     @Override

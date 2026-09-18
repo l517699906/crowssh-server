@@ -101,7 +101,50 @@
                     <compilerVersion>${java.version}</compilerVersion>
                 </configuration>
             </plugin>
+            <!--
+              surefire 配置：xfg-wrench jar 内嵌了旧版 slf4j 1.7.x 的 StaticLoggerBinder，
+              与 logback 1.5.x 的 Configurator SPI 冲突导致 @Slf4j 类初始化失败。
+              指定 logback 配置文件绕过 ContextInitializer.autoConfig 的 SPI 扫描。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <logback.configurationFile>logback-test.xml</logback.configurationFile>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
+    <!-- 显式派发专项验证：默认 test 行为不变；合并回归应另行运行 DB 和 SSH 测试。 -->
+    <profiles>
+        <profile>
+            <id>subagent-validation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <testIncludes>
+                                <testInclude>**/SubAgent*Test.java</testInclude>
+                            </testIncludes>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <includes>
+                                <include>**/SubAgent*Test.java</include>
+                            </includes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

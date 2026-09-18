@@ -36,6 +36,16 @@ final class RuntimeChatModelContext {
         CURRENT.set(new State(config));
     }
 
+    static RuntimeChatModelScope install(RuntimeModelConfig config) {
+        State previous = CURRENT.get();
+        if (config == null) CURRENT.remove();
+        else CURRENT.set(new State(config));
+        return new RuntimeChatModelScope(() -> {
+            clear();
+            if (previous != null) CURRENT.set(previous);
+        });
+    }
+
     static void clear() {
         State state = CURRENT.get();
         CURRENT.remove();

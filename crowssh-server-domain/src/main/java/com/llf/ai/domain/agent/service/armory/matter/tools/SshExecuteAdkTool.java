@@ -90,6 +90,12 @@ public class SshExecuteAdkTool {
         return binding;
     }
 
+    /** 在任务线程安装资源快照，退出时恢复原绑定，支持嵌套调用。 */
+    public static AutoCloseable executionScope(ExecutionBinding binding) {
+        return AgentExecutionBinding.install(binding == null ? null : new AgentExecutionBinding.SshBinding(
+                binding.ownerId(), binding.terminalSessionId(), binding.connectionId(), binding.agentSessionId()));
+    }
+
     static String currentAgentSessionId() {
         AgentExecutionBinding.Resource binding = AgentExecutionBinding.capture();
         return binding == null ? null : binding.agentSessionId();
@@ -245,6 +251,7 @@ public class SshExecuteAdkTool {
                     agentSessionId,
                     ToolExecutionEvent.running(
                             toolCallId, "executeCommand", arguments, startedAt));
+            SubAgentExecutionScope.checkActiveIfPresent();
             // AI 命令通过隔离执行协议返回真实退出码，避免仅凭输出文本猜测成功与否。
             CommandExecutionResult execution = sshTerminalService.executeCommandWithResult(
                     ownerId, terminalSessionId, safeCommand);

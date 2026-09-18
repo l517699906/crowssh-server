@@ -377,7 +377,7 @@ public class RuntimeChatModelService implements DisposableBean {
             throw new IllegalArgumentException("API Key 长度超出限制");
         }
 
-        URI uri = parseHttpsUri(config.getBaseUrl());
+        URI uri = parseHttpUri(config.getBaseUrl());
         if (legacyProtocol && OpenAiChatProtocolAdapter.PROTOCOL.equals(protocol)) {
             uri = migrateLegacyOpenAiBaseUri(uri);
         }
@@ -431,24 +431,25 @@ public class RuntimeChatModelService implements DisposableBean {
         }
     }
 
-    private URI parseHttpsUri(String baseUrl) {
+    private URI parseHttpUri(String baseUrl) {
         String value = required(baseUrl, "服务地址");
         if (value.length() > 2048) {
             throw new IllegalArgumentException("服务地址长度超出限制");
         }
         try {
             URI uri = URI.create(value);
-            if (!"https".equalsIgnoreCase(uri.getScheme())
+            if ((!"http".equalsIgnoreCase(uri.getScheme())
+                    && !"https".equalsIgnoreCase(uri.getScheme()))
                     || uri.getHost() == null
                     || uri.getUserInfo() != null
                     || uri.getQuery() != null
                     || uri.getFragment() != null
                     || uri.getRawPath().contains("..")) {
-                throw new IllegalArgumentException("服务地址必须是有效的 HTTPS 地址");
+                throw new IllegalArgumentException("服务地址必须是有效的 HTTP 或 HTTPS 地址");
             }
             return uri;
         } catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("服务地址必须是有效的 HTTPS 地址");
+            throw new IllegalArgumentException("服务地址必须是有效的 HTTP 或 HTTPS 地址");
         }
     }
 

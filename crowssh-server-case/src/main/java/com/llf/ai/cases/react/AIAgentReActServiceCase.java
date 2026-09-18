@@ -83,6 +83,9 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     @Resource(name = "sseHeartbeatScheduler")
     private ScheduledExecutorService heartbeatScheduler;
 
+    @Resource
+    private com.llf.ai.domain.agent.service.armory.matter.tools.DynamicAgentOrchestrator subAgentOrchestrator;
+
     private final Map<String, ActiveStream> activeStreams = new ConcurrentHashMap<>();
 
     @Override
@@ -416,6 +419,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             if (!streamActive.getAndSet(false)) return;
             databaseBinding = context.getDatabaseBinding();
         }
+        if (subAgentOrchestrator != null) subAgentOrchestrator.cancel(ownerId, agentSessionId);
         try {
             if (databaseBinding != null) {
                 stopDatabaseTurn(databaseBinding);

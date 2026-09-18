@@ -6,6 +6,7 @@ import com.google.adk.agents.InvocationContext;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
+import com.google.adk.tools.AgentTool;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.genai.types.Content;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service("myTestPlugin")
@@ -43,6 +45,7 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Content> beforeAgentCallback(BaseAgent agent, CallbackContext callbackContext) {
         return Maybe.fromAction(() -> {
+
             log.info("插件日志-🤖 智能体启动 | agentName:{} | invocationId:{}",
                     agent.name(),
                     callbackContext.invocationId());
@@ -75,9 +78,10 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<LlmResponse> afterModelCallback(CallbackContext callbackContext, LlmResponse llmResponse) {
         return Maybe.fromAction(() -> {
-            log.info("插件日志-🧠 大模型响应 | agent:{} | contentLength:{} | turnComplete:{}",
+            String contentText = formatContent(llmResponse.content());
+            log.info("插件日志-🧠 大模型响应 | agent:{} | content:{} | turnComplete:{}",
                     callbackContext.agentName(),
-                    contentLength(llmResponse.content()),
+                    contentText,
                     llmResponse.turnComplete().orElse(false));
 
             llmResponse.usageMetadata().ifPresent(usage -> {
@@ -91,6 +95,14 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Map<String, Object>> beforeToolCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext) {
         return Maybe.fromAction(() -> {
+            if (tool instanceof AgentTool agentTool) {
+                log.info("插件日志-🧩 子Agent派发开始 | parentAgent:{} | subAgent:{} | request:{} | invocationId:{}",
+                        toolContext.agentName(),
+                        agentTool.getAgent().name(),
+                        formatArgs(toolArgs),
+                        toolContext.invocationId());
+                return;
+            }
             log.info("插件日志-🔧 工具调用开始 | tool:{} | agent:{} | argumentCount:{}",
                     tool.name(),
                     toolContext.agentName(),
@@ -101,6 +113,14 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Map<String, Object>> afterToolCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Map<String, Object> result) {
         return Maybe.fromAction(() -> {
+            if (tool instanceof AgentTool agentTool) {
+                log.info("插件日志-🧩 子Agent派发完成 | parentAgent:{} | subAgent:{} | result:{} | invocationId:{}",
+                        toolContext.agentName(),
+                        agentTool.getAgent().name(),
+                        formatArgs(result),
+                        toolContext.invocationId());
+                return;
+            }
             log.info("插件日志-🔧 工具调用完成 | tool:{} | agent:{} | resultFieldCount:{}",
                     tool.name(),
                     toolContext.agentName(),
@@ -111,6 +131,14 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Map<String, Object>> onToolErrorCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Throwable error) {
         return Maybe.fromAction(() -> {
+            if (tool instanceof AgentTool agentTool) {
+                log.error("插件日志-🧩 子Agent派发异常 | parentAgent:{} | subAgent:{} | request:{} | error:{}",
+                        toolContext.agentName(),
+                        agentTool.getAgent().name(),
+                        formatArgs(toolArgs),
+                        error.getMessage(), error);
+                return;
+            }
             log.error("插件日志-🔧 工具调用异常 | tool:{} | agent:{} | argumentCount:{} | errorType:{}",
                     tool.name(),
                     toolContext.agentName(),
@@ -134,5 +162,36 @@ public class MyTestPlugin extends BasePlugin {
 
     private int sizeOf(Map<String, Object> values) {
         return values == null ? 0 : values.size();
+    }
+
+    private String formatContent(Optional<Content> contentOptional) {
+        if (contentOptional == null || contentOptional.isEmpty()) {
+            return "None";
+        }
+        Content content = contentOptional.get();
+        if (content.parts().isEmpty() || content.parts().get().isEmpty()) {
+            return "None";
+        }
+        String text = content.parts().get().stream()
+                .map(part -> part.text().orElse(""))
+                .collect(Collectors.joining("\n"))
+                .trim();
+        if (text.length() > 200) {
+            return text.substring(0, 200) + "...";
+        }
+        return text;
+    }
+
+    private String formatArgs(Map<String, Object> args) {
+        if (args == null || args.isEmpty()) {
+            return "{}";
+        }
+        String str = args.entrySet().stream()
+                .map(e -> e.getKey() + "=" + e.getValue())
+                .collect(Collectors.joining(", "));
+        if (str.length() > 300) {
+            return "{" + str.substring(0, 300) + "...}";
+        }
+        return "{" + str + "}";
     }
 }
