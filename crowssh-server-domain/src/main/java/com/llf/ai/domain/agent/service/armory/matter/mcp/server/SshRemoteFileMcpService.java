@@ -1,6 +1,6 @@
 package com.llf.ai.domain.agent.service.armory.matter.mcp.server;
 
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.SshExecuteAdkTool;
 import com.llf.ai.domain.ssh.adapter.port.SftpFileEntity;
 import com.llf.ai.domain.ssh.service.ISftpService;
 import com.llf.ai.domain.ssh.service.sftp.SftpTextContentEntity;

@@ -3,7 +3,7 @@ package com.llf.ai.domain.agent.service.armory.matter.skills.impl;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.service.armory.matter.skills.ToolSkillsCreateService;
 import lombok.extern.slf4j.Slf4j;
-import com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseCompatibleToolCallback;
+import com.llf.ai.domain.agent.service.armory.matter.tools.adapter.DatabaseCompatibleToolCallback;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;

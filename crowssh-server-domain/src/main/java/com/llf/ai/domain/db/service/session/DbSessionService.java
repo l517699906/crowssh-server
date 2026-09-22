@@ -58,7 +58,7 @@ public class DbSessionService implements IDbSessionService, IDbSessionReaper {
     private DbApprovalRegistry approvalRegistry;
 
     @Autowired
-    public void setApprovalService(com.llf.ai.domain.agent.service.armory.matter.tools.CommandApprovalService service) {
+    public void setApprovalService(com.llf.ai.domain.agent.service.armory.matter.tools.ssh.CommandApprovalService service) {
         approvalRegistry = service.databaseApprovals();
     }
 

@@ -2,7 +2,7 @@ package com.llf.ai.config;
 
 import com.llf.ai.domain.agent.service.armory.matter.mcp.server.DbInspectionMcpService;
 import org.springframework.ai.tool.ToolCallbackProvider;
-import com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseCompatibleToolCallback;
+import com.llf.ai.domain.agent.service.armory.matter.tools.adapter.DatabaseCompatibleToolCallback;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

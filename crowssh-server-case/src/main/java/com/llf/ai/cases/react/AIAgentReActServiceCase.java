@@ -9,8 +9,8 @@ import com.llf.ai.cases.react.node.RootNode;
 import com.llf.ai.domain.agent.model.entity.ChatSessionEntity;
 import com.llf.ai.domain.agent.model.valobj.RuntimeModelConfig;
 import com.llf.ai.domain.agent.service.IChatService;
-import com.llf.ai.domain.agent.service.armory.matter.tools.CommandApprovalService;
-import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionObserverRegistry;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.CommandApprovalService;
+import com.llf.ai.domain.agent.service.armory.matter.tools.execution.ToolExecutionObserverRegistry;
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelScope;
 import com.llf.ai.domain.agent.service.model.RuntimeChatModelService;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
@@ -84,7 +84,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     private ScheduledExecutorService heartbeatScheduler;
 
     @Resource
-    private com.llf.ai.domain.agent.service.armory.matter.tools.DynamicAgentOrchestrator subAgentOrchestrator;
+    private com.llf.ai.domain.agent.service.armory.matter.tools.subagent.DynamicAgentOrchestrator subAgentOrchestrator;
 
     private final Map<String, ActiveStream> activeStreams = new ConcurrentHashMap<>();
 

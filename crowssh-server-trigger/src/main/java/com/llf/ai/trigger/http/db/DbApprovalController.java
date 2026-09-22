@@ -2,7 +2,7 @@ package com.llf.ai.trigger.http.db;
 
 import com.llf.ai.api.dto.DbApprovalDecisionRequestDTO;
 import com.llf.ai.api.response.Response;
-import com.llf.ai.domain.agent.service.armory.matter.tools.CommandApprovalService;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.CommandApprovalService;
 import com.llf.ai.types.enums.ResponseCode;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.*;

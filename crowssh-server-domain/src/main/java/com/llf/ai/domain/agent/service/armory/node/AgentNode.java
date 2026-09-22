@@ -13,7 +13,11 @@ import com.llf.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.llf.ai.domain.agent.service.armory.AbstractArmorySupport;
 import com.llf.ai.domain.agent.service.armory.catalog.AgentCatalog;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
-import com.llf.ai.domain.agent.service.armory.matter.tools.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.database.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.subagent.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.execution.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.adapter.*;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -148,7 +152,7 @@ public class AgentNode extends AbstractArmorySupport {
         log.info("ADK 工具注册完成: count={}, names={}", toolsByName.size(), toolsByName.keySet());
         if ("DB".equals(resourceKind)) {
             return toolsByName.values().stream().map(tool -> (Object)
-                    new com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseBoundTool(tool)).toList();
+                    new com.llf.ai.domain.agent.service.armory.matter.tools.database.DatabaseBoundTool(tool)).toList();
         }
         return List.copyOf(toolsByName.values());
     }

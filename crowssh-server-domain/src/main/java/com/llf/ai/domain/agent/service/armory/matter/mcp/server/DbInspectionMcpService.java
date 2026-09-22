@@ -2,9 +2,9 @@ package com.llf.ai.domain.agent.service.armory.matter.mcp.server;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
-import com.llf.ai.domain.agent.service.armory.matter.tools.AgentExecutionBinding;
-import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionEvent;
-import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionObserverRegistry;
+import com.llf.ai.domain.agent.service.armory.matter.tools.database.AgentExecutionBinding;
+import com.llf.ai.domain.agent.service.armory.matter.tools.execution.ToolExecutionEvent;
+import com.llf.ai.domain.agent.service.armory.matter.tools.execution.ToolExecutionObserverRegistry;
 import com.llf.ai.domain.db.model.entity.DbExecutionEntity;
 import com.llf.ai.domain.db.model.valobj.DbExecutionOutcome;
 import com.llf.ai.domain.db.model.valobj.DbInspectionRequest;

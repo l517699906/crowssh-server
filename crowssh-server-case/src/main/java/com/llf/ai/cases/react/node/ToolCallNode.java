@@ -8,7 +8,7 @@ import com.llf.ai.cases.react.factory.DefaultReActFactory;
 import com.llf.ai.domain.agent.service.IChatContextService;
 import com.llf.ai.domain.agent.service.ILongTermMemoryService;
 import com.llf.ai.domain.agent.service.IPromptService;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.SshExecuteAdkTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 

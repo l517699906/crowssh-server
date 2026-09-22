@@ -19,7 +19,7 @@ import com.llf.ai.domain.agent.service.IChatContextService;
 import com.llf.ai.domain.agent.service.IPromptService;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
 import com.llf.ai.domain.agent.service.armory.matter.session.ManagedSessionService;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.SshExecuteAdkTool;
 import com.llf.ai.domain.ssh.adapter.port.TerminalSessionEntity;
 import com.llf.ai.domain.ssh.service.ISshConnectionService;
 import com.llf.ai.domain.ssh.service.ISshTerminalService;
@@ -87,9 +87,9 @@ public class ChatService implements IChatService {
         if (originalMessage != null) delta.put(ManagedSessionService.ORIGINAL_USER_MESSAGE_STATE_KEY, originalMessage);
         RunConfig runConfig = RunConfig.builder().build();
         // RunConfig 由本次服务端调用独占，跨线程工具从对象身份查找，不能使用历史 state 重建权限。
-        try (var scope = com.llf.ai.domain.agent.service.armory.matter.tools.AgentExecutionBinding.install(
-                new com.llf.ai.domain.agent.service.armory.matter.tools.AgentExecutionBinding.DbBinding(binding));
-             var invocation = com.llf.ai.domain.agent.service.armory.matter.tools.DatabaseInvocationBindings.register(runConfig, binding)) {
+        try (var scope = com.llf.ai.domain.agent.service.armory.matter.tools.database.AgentExecutionBinding.install(
+                new com.llf.ai.domain.agent.service.armory.matter.tools.database.AgentExecutionBinding.DbBinding(binding));
+             var invocation = com.llf.ai.domain.agent.service.armory.matter.tools.database.DatabaseInvocationBindings.register(runConfig, binding)) {
             Flowable<Event> events = agent.getRunner().runAsync(binding.ownerId(), binding.agentSessionId(),
                     Content.fromParts(Part.fromText(message)), runConfig, delta);
             withSessionGovernance(events, agent.getRunner(), agent.getAppName(), binding.ownerId(), binding.agentSessionId())

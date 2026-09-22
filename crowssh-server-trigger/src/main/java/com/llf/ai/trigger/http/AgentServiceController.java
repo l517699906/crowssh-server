@@ -5,7 +5,7 @@ import com.llf.ai.api.response.Response;
 import com.llf.ai.cases.IAIAgentReActServiceCase;
 import com.llf.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.llf.ai.domain.agent.service.IChatService;
-import com.llf.ai.domain.agent.service.armory.matter.tools.CommandApprovalService;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.CommandApprovalService;
 import com.llf.ai.types.enums.ResponseCode;
 import com.llf.ai.types.exception.AppException;
 import jakarta.annotation.Resource;

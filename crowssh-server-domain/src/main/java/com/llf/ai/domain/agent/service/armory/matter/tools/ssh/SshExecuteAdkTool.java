@@ -1,4 +1,9 @@
-package com.llf.ai.domain.agent.service.armory.matter.tools;
+package com.llf.ai.domain.agent.service.armory.matter.tools.ssh;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.database.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.subagent.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.execution.*;
+import com.llf.ai.domain.agent.service.armory.matter.tools.adapter.*;
 
 import com.google.adk.tools.Annotations;
 import com.google.adk.tools.ToolContext;
@@ -96,7 +101,7 @@ public class SshExecuteAdkTool {
                 binding.ownerId(), binding.terminalSessionId(), binding.connectionId(), binding.agentSessionId()));
     }
 
-    static String currentAgentSessionId() {
+    public static String currentAgentSessionId() {
         AgentExecutionBinding.Resource binding = AgentExecutionBinding.capture();
         return binding == null ? null : binding.agentSessionId();
     }

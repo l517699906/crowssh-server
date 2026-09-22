@@ -3,7 +3,7 @@ package com.llf.ai.domain.agent.service.armory.matter.mcp.server;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.SshExecuteAdkTool;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;

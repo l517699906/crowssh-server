@@ -14,9 +14,9 @@ import com.llf.ai.domain.agent.model.valobj.intent.IntentResultVO;
 import com.llf.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
 import com.llf.ai.domain.agent.service.*;
 import com.llf.ai.domain.agent.service.armory.factory.DefaultArmoryFactory;
-import com.llf.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool;
+import com.llf.ai.domain.agent.service.armory.matter.tools.ssh.SshExecuteAdkTool;
 import com.llf.ai.domain.agent.service.intent.IntentService;
-import com.llf.ai.domain.agent.service.armory.matter.tools.ToolExecutionEvent;
+import com.llf.ai.domain.agent.service.armory.matter.tools.execution.ToolExecutionEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
