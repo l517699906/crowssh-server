@@ -172,11 +172,6 @@
         <scope>import</scope>
       </dependency>
       <!-- https://github.com/spring-ai-community/spring-ai-agent-utils -->
-      <dependency>
-        <groupId>org.springaicommunity</groupId>
-        <artifactId>spring-ai-agent-utils</artifactId>
-        <version>0.4.2</version>
-      </dependency>
       <!-- 设计模式框架 -->
       <dependency>
         <groupId>cn.bugstack.wrench</groupId>

@@ -55,6 +55,9 @@ public class ConversationContextVO {
     /** 上一次识别到的意图 */
     private IntentTypeEnumVO lastIntent;
 
+    /** 上一次完整识别结果，供 Prompt 渲染置信度、候选与实体 */
+    private IntentResultVO lastIntentResult;
+
     /** 当前任务态（支撑 CONTINUE 与多步任务自纠错） */
     private TaskStateVO taskState;
 

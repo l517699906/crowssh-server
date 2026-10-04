@@ -8,13 +8,12 @@ import com.llf.ai.domain.agent.service.armory.matter.tools.adapter.*;
 import com.llf.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
 import com.llf.ai.domain.agent.model.valobj.dynamic.DynamicTask;
 import com.llf.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
+import com.llf.ai.domain.agent.service.event.AgentEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionDeclaration;
-import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Single;
 import lombok.extern.slf4j.Slf4j;
 
@@ -40,49 +39,89 @@ public class BatchSubAgentDispatchTool extends BaseTool {
     /** DAG 编排器，负责任务并发调度 */
     private final DynamicAgentOrchestrator orchestrator;
 
+    /** 负责发布派发工具的调用/响应事件，供 SSE 可视化 */
+    private final SubAgentDispatchEventPublisher eventPublisher;
+
     /** 计划解析/校验器：解析函数调用参数并校验依赖合法性 */
     private final PlanValidator planValidator = new PlanValidator();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public BatchSubAgentDispatchTool(String agentId, String parentAgentName, List<String> allowedAgents, DynamicAgentOrchestrator orchestrator) {
+    /**
+     * 兼容旧调用方式；不注入事件发布器时派发仍可正常执行，只是不产生嵌套事件。
+     */
+    public BatchSubAgentDispatchTool(List<String> allowedAgents, DynamicAgentOrchestrator orchestrator) {
+        this("", "", allowedAgents, orchestrator, null);
+    }
+
+    /** 兼容当前 AgentNode 的装配方式；事件路由器由后续 Spring 装配阶段提供。 */
+    public BatchSubAgentDispatchTool(String agentId, String parentAgentName,
+                                     List<String> allowedAgents,
+                                     DynamicAgentOrchestrator orchestrator) {
+        this(agentId, parentAgentName, allowedAgents, orchestrator, null);
+    }
+
+    /**
+     * 创建批量子 Agent 派发工具。
+     *
+     * @param allowedAgents       允许派发的子 Agent 名称白名单
+     * @param orchestrator        任务 DAG 编排器
+     * @param agentEventPublisher 可选事件发布器；为空时不回流工具事件
+     */
+    public BatchSubAgentDispatchTool(String agentId, String parentAgentName, List<String> allowedAgents,
+                                     DynamicAgentOrchestrator orchestrator,
+                                     AgentEventPublisher agentEventPublisher) {
         super("dispatchSubAgents", "批量派发多个已配置子Agent，支持任务依赖、并行执行和结果汇总");
         this.agentId = agentId;
         this.parentAgentName = parentAgentName;
         this.allowedAgents = List.copyOf(allowedAgents);
         this.orchestrator = orchestrator;
+        this.eventPublisher = new SubAgentDispatchEventPublisher(agentEventPublisher);
     }
 
     /**
      * 声明工具的函数签名：
      * tasks 为任务数组（每项含 agentName、request，可选 taskId/dependsOn/timeoutSeconds/maxRetries），
      * maxConcurrency 为可选并发上限，failFast 为可选的失败即中止开关。
+     * <p>
+     * 必须使用 parametersJsonSchema：google-adk-spring-ai 1.2.0 的 ToolConverter 转换 genai Schema
+     * 时会丢弃数组的 items，模型看不到任务字段契约，只能猜测字段名并被下方白名单拒绝。
      */
     @Override
     public Optional<FunctionDeclaration> declaration() {
-        Schema taskSchema = Schema.builder()
-                .type("OBJECT")
-                .properties(ImmutableMap.of(
-                        "taskId", Schema.builder().type("STRING").build(),
-                        "agentName", Schema.builder().type("STRING").build(),
-                        "request", Schema.builder().type("STRING").build(),
-                        "dependsOn", Schema.builder().type("ARRAY")
-                                .items(Schema.builder().type("STRING").build()).build(),
-                        "timeoutSeconds", Schema.builder().type("INTEGER").build(),
-                        "maxRetries", Schema.builder().type("INTEGER").build()))
-                .required(ImmutableList.of("agentName", "request"))
-                .build();
+        Map<String, Object> taskProperties = new LinkedHashMap<>();
+        taskProperties.put("agentName", Map.of("type", "string", "enum", allowedAgents,
+                "description", "要派发的子 Agent 名称，只能取枚举值"));
+        taskProperties.put("request", Map.of("type", "string", "description", "交给子 Agent 的完整任务说明"));
+        taskProperties.put("taskId", Map.of("type", "string", "description", "可选，任务唯一标识，供 dependsOn 引用"));
+        taskProperties.put("dependsOn", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 10,
+                "description", "可选，前置任务的 taskId 列表"));
+        taskProperties.put("timeoutSeconds", Map.of("type", "integer", "minimum", 1, "maximum", 120,
+                "description", "可选，单任务超时秒数"));
+        taskProperties.put("maxRetries", Map.of("type", "integer", "minimum", 0, "maximum", 0,
+                "description", "可选，只能为 0，失败不自动重试"));
+        Map<String, Object> taskSchema = new LinkedHashMap<>();
+        taskSchema.put("type", "object");
+        taskSchema.put("properties", taskProperties);
+        taskSchema.put("required", List.of("agentName", "request"));
+        taskSchema.put("additionalProperties", false);
+
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("tasks", Map.of("type", "array", "items", taskSchema, "minItems", 1, "maxItems", 10));
+        properties.put("maxConcurrency", Map.of("type", "integer", "minimum", 1, "maximum", 4));
+        properties.put("failFast", Map.of("type", "boolean"));
+        Map<String, Object> parameters = new LinkedHashMap<>();
+        parameters.put("type", "object");
+        parameters.put("properties", properties);
+        parameters.put("required", List.of("tasks"));
+        parameters.put("additionalProperties", false);
 
         return Optional.of(FunctionDeclaration.builder()
                 .name(name())
-                .description(description())
-                .parameters(Schema.builder()
-                        .type("OBJECT")
-                        .properties(ImmutableMap.of(
-                                "tasks", Schema.builder().type("ARRAY").items(taskSchema).build(),
-                                "maxConcurrency", Schema.builder().type("INTEGER").build(),
-                                "failFast", Schema.builder().type("BOOLEAN").build()))
-                        .required(ImmutableList.of("tasks"))
-                        .build())
+                .description(description() + "。参数格式：{\"tasks\":[{\"agentName\":\"<"
+                        + String.join("|", allowedAgents) + ">\",\"request\":\"任务说明\","
+                        + "\"taskId\"?:\"t1\",\"dependsOn\"?:[\"t0\"],\"timeoutSeconds\"?:1-120}],"
+                        + "\"maxConcurrency\"?:1-4,\"failFast\"?:false}，任务项不得包含其他字段")
+                .parametersJsonSchema(parameters)
                 .build());
     }
 
@@ -94,6 +133,9 @@ public class BatchSubAgentDispatchTool extends BaseTool {
      */
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
+        // 先发布工具调用，再执行计划，确保 UI 能展示“正在派发”状态。
+        eventPublisher.publishCall(toolContext, name(), args);
+        long startedAt = System.currentTimeMillis();
         try {
             AgentExecutionContext context = SubAgentExecutionScope.capture(agentId, parentAgentName);
             if (args == null || !Set.of("tasks", "maxConcurrency", "failFast").containsAll(args.keySet()))
@@ -104,7 +146,7 @@ public class BatchSubAgentDispatchTool extends BaseTool {
             // 解析函数调用参数中的任务列表
             List<Map<String, Object>> rawTasks = objectMapper.convertValue(args.get("tasks"), new com.fasterxml.jackson.core.type.TypeReference<>() {});
             if (rawTasks == null || rawTasks.isEmpty() || rawTasks.size() > 10) {
-                return Single.just(ImmutableMap.of("success", false, "error", "tasks is empty"));
+                return Single.just(reject(args, startedAt, "tasks 必须包含 1 到 10 个任务"));
             }
 
             // 转为 DynamicTask 并补全缺失的 taskId
@@ -142,7 +184,7 @@ public class BatchSubAgentDispatchTool extends BaseTool {
             // Agent 白名单校验：任务中不允许出现未装配的 Agent
             List<String> requestedAgents = tasks.stream().map(DynamicTask::getAgentName).toList();
             if (!new HashSet<>(allowedAgents).containsAll(requestedAgents)) {
-                return Single.just(ImmutableMap.of("success", false, "error", "agent not allowed"));
+                return Single.just(reject(args, startedAt, "agentName 只能是: " + String.join(", ", allowedAgents)));
             }
 
             // 到这开始执行任务计划
@@ -151,10 +193,34 @@ public class BatchSubAgentDispatchTool extends BaseTool {
 
             return Single.just(result);
         } catch (Exception exception) {
-            log.warn("批量子Agent派发拒绝: {}", exception.getClass().getSimpleName());
-            return Single.just(ImmutableMap.of("success", false, "error", String.valueOf(exception.getMessage())));
+            return Single.just(reject(args, startedAt, String.valueOf(exception.getMessage())));
         }
 
+    }
+
+    /**
+     * 参数校验失败时，记录模型实际提交的字段名（不含内容），并向父会话发布失败事件，
+     * 避免派发被静默拒绝后客户端执行步骤里完全看不到。
+     */
+    private Map<String, Object> reject(Map<String, Object> args, long startedAt, String error) {
+        log.warn("批量子Agent派发拒绝: error={}, argKeys={}, taskKeys={}", error, keysOf(args), taskKeysOf(args));
+        String sessionId = SshExecuteAdkTool.currentAgentSessionId();
+        ToolExecutionObserverRegistry.publish(sessionId, ToolExecutionEvent.completed(
+                "dispatch-rejected-" + UUID.randomUUID(), name(), Map.of(),
+                Map.of("success", false, "error", error), "error",
+                startedAt, System.currentTimeMillis(), 0, "子 Agent 派发被拒绝：" + error));
+        return ImmutableMap.of("success", false, "error", error);
+    }
+
+    private static Set<String> keysOf(Object value) {
+        return value instanceof Map<?, ?> map
+                ? map.keySet().stream().map(String::valueOf).collect(java.util.stream.Collectors.toCollection(TreeSet::new))
+                : Set.of();
+    }
+
+    private static List<Set<String>> taskKeysOf(Map<String, Object> args) {
+        if (args == null || !(args.get("tasks") instanceof List<?> tasks)) return List.of();
+        return tasks.stream().limit(10).map(BatchSubAgentDispatchTool::keysOf).toList();
     }
 
     private static int integer(Object value, int min, int max) {

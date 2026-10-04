@@ -1,9 +1,11 @@
 package com.llf.ai.domain.agent.model.valobj.prompt;
 
+import com.llf.ai.domain.agent.model.valobj.intent.IntentResultVO;
 import lombok.Builder;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -47,4 +49,21 @@ public class PromptContextVO {
      * 由 {@code DynamicPromptBuilder} 渲染为消息前缀 "[用户意图] xxx"，让主模型感知意图但不强制路由。
      */
     private String intentLabel;
+
+    /**
+     * 结构化意图识别结果；优先于 intentLabel 使用，能保留置信度、候选与实体。
+     */
+    private IntentResultVO intentResult;
+
+    /**
+     * 声明为 STABLE_PREFIX (稳定) 的 Provider 输出。
+     */
+    @Builder.Default
+    private Map<String, Object> stableContext = Map.of();
+
+    /**
+     * 声明为 EPHEMERAL_SUFFIX (临时)  的 Provider 输出。
+     */
+    @Builder.Default
+    private Map<String, Object> ephemeralContext = Map.of();
 }
