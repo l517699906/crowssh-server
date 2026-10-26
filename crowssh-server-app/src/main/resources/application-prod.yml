@@ -59,23 +59,22 @@ thread:
         block-queue-size: 5000
         policy: CallerRunsPolicy
 
-# 数据库配置
-#spring:
+# 数据库配置；Compose 部署可用 SPRING_DATASOURCE_* 环境变量覆盖
+spring:
   datasource:
-    username: root
+    username: ${CROWSSH_DB_USERNAME:root}
     password: ${CROWSSH_DB_PASSWORD}
-    url: jdbc:mysql://127.0.0.1:3306/crowssh?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true
+    url: ${CROWSSH_DB_URL:jdbc:mysql://127.0.0.1:3306/crowssh?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true}
     driver-class-name: com.mysql.cj.jdbc.Driver
-  hikari:
-    pool-name: Retail_HikariCP
-    minimum-idle: 15 #最小空闲连接数量
-    idle-timeout: 180000 #空闲连接存活最大时间，默认600000（10分钟）
-    maximum-pool-size: 25 #连接池最大连接数，默认是10
-    auto-commit: true  #此属性控制从池返回的连接的默认自动提交行为,默认值：true
-    max-lifetime: 1800000 #此属性控制池中连接的最长生命周期，值0表示无限生命周期，默认1800000即30分钟
-    connection-timeout: 30000 #数据库连接超时时间,默认30秒，即30000
-    connection-test-query: SELECT 1
-  type: com.zaxxer.hikari.HikariDataSource
+    type: com.zaxxer.hikari.HikariDataSource
+    hikari:
+      pool-name: CrowSSH_HikariCP
+      minimum-idle: 5 #最小空闲连接数量
+      idle-timeout: 180000 #空闲连接存活最大时间，默认600000（10分钟）
+      maximum-pool-size: 25 #连接池最大连接数，默认是10
+      auto-commit: true  #此属性控制从池返回的连接的默认自动提交行为,默认值：true
+      max-lifetime: 1800000 #此属性控制池中连接的最长生命周期，值0表示无限生命周期，默认1800000即30分钟
+      connection-timeout: 30000 #数据库连接超时时间,默认30秒，即30000
 
 mybatis-plus:
   mapper-locations: classpath:/mybatis/mapper/*.xml

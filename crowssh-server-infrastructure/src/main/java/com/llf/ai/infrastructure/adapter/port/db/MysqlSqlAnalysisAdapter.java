@@ -2,6 +2,7 @@ package com.llf.ai.infrastructure.adapter.port.db;
 
 import com.alibaba.druid.DbType;
 import com.alibaba.druid.sql.SQLUtils;
+import com.alibaba.druid.sql.ast.SQLExpr;
 import com.alibaba.druid.sql.ast.SQLObject;
 import com.alibaba.druid.sql.ast.SQLStatement;
 import com.alibaba.druid.sql.ast.expr.*;
@@ -85,7 +86,8 @@ public class MysqlSqlAnalysisAdapter implements ISqlAnalysisPort {
             return new Analysis(sql, kind, references, unresolved, inspection.functions,
                     false, false, inspection.wildcard, inspection.selectCount > 1 || (writes && inspection.selectCount > 0),
                     inspection.locking, inspection.fileAccess, inspection.dynamic,
-                    inspection.unsupported, writes && inspection.unqualifiedTable, reasons);
+                    inspection.unsupported, writes && inspection.unqualifiedTable, reasons,
+                    unboundedWrite(statement), destructive(statement));
         } catch (RuntimeException | StackOverflowError e) {
             // 解析器异常可含 SQL 原文，不进入日志或返回值。
             return rejected(sql, false, false, "SQL 无法完整解析或超出解析复杂度限制");
@@ -105,6 +107,72 @@ public class MysqlSqlAnalysisAdapter implements ISqlAnalysisPort {
                     && kill.getThreadId() instanceof SQLIntegerExpr ? SqlStatementKind.ADMIN : SqlStatementKind.UNKNOWN;
         }
         return SqlStatementKind.DDL;
+    }
+
+    /** UPDATE/DELETE 没有 WHERE，或 WHERE 不依赖任何列即可成立时，视为全表影响。 */
+    private boolean unboundedWrite(SQLStatement statement) {
+        SQLExpr where;
+        if (statement instanceof SQLUpdateStatement update) where = update.getWhere();
+        else if (statement instanceof SQLDeleteStatement delete) where = delete.getWhere();
+        else return false;
+        return where == null || alwaysTrue(where);
+    }
+
+    private boolean alwaysTrue(SQLExpr expr) {
+        if (expr instanceof SQLBinaryOpExpr binary) {
+            SQLBinaryOperator operator = binary.getOperator();
+            if (operator == SQLBinaryOperator.BooleanOr || operator == SQLBinaryOperator.BooleanXor) {
+                return alwaysTrue(binary.getLeft()) || alwaysTrue(binary.getRight());
+            }
+            if (operator == SQLBinaryOperator.BooleanAnd) {
+                return alwaysTrue(binary.getLeft()) && alwaysTrue(binary.getRight());
+            }
+            // id = id 之类左右相同的比较对非空行恒真。
+            if ((operator == SQLBinaryOperator.Equality || operator == SQLBinaryOperator.GreaterThanOrEqual
+                    || operator == SQLBinaryOperator.LessThanOrEqual
+                    || operator == SQLBinaryOperator.LessThanOrEqualOrGreaterThan)
+                    && binary.getLeft() != null && binary.getLeft().equals(binary.getRight())) {
+                return true;
+            }
+        }
+        if (referencesColumn(expr)) return false;
+        // 不引用列的条件对每一行取值相同；只有能确认求值为假时才不算全表影响。
+        try {
+            Object value = com.alibaba.druid.sql.visitor.SQLEvalVisitorUtils.eval(DbType.mysql, expr);
+            if (value instanceof Boolean bool) return bool;
+            if (value instanceof Number number) return number.doubleValue() != 0;
+            return value != null;
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    private boolean referencesColumn(SQLExpr expr) {
+        boolean[] found = {false};
+        expr.accept(new MySqlASTVisitorAdapter() {
+            @Override
+            public void preVisit(SQLObject node) {
+                if (node instanceof SQLIdentifierExpr || node instanceof SQLPropertyExpr
+                        || node instanceof SQLQueryExpr || node instanceof SQLExistsExpr
+                        || node instanceof SQLInSubQueryExpr) found[0] = true;
+            }
+        });
+        return found[0];
+    }
+
+    /** 删除表、库、索引、列或清空数据的结构变更。 */
+    private boolean destructive(SQLStatement statement) {
+        if (statement instanceof SQLDropTableStatement || statement instanceof SQLTruncateStatement
+                || statement instanceof SQLDropDatabaseStatement || statement instanceof SQLDropIndexStatement) {
+            return true;
+        }
+        if (statement instanceof SQLAlterTableStatement alter) {
+            return alter.getItems().stream().anyMatch(item -> {
+                String name = item.getClass().getSimpleName();
+                return name.contains("Drop") || name.contains("Truncate");
+            });
+        }
+        return false;
     }
 
     private boolean supportedControl(SQLStatement statement) {

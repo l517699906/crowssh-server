@@ -8,12 +8,14 @@ import com.llf.ai.domain.agent.service.armory.matter.tools.adapter.*;
 import com.llf.ai.domain.agent.model.valobj.dynamic.*;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import lombok.extern.slf4j.Slf4j;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** 单层任务调度：有界并发、依赖结果、整轮截止时间和可中断等待。 */
 @Service
+@Slf4j
 public class DynamicAgentOrchestrator {
     private record RunKey(String ownerId, String sessionId) {}
     private static final class ActiveRun {
@@ -144,7 +146,13 @@ public class DynamicAgentOrchestrator {
                         task.setStatus(TaskStatus.COMPLETED);
                     } catch (ExecutionException failure) {
                         task.setStatus(TaskStatus.FAILED);
-                        task.setError("子 Agent 执行失败；请检查工具事件，未自动重试");
+                        Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+                        String detail = cause.getMessage() == null || cause.getMessage().isBlank()
+                                ? cause.getClass().getSimpleName()
+                                : cause.getClass().getSimpleName() + ": " + cause.getMessage();
+                        task.setError("子 Agent 执行失败: " + detail);
+                        log.warn("子 Agent 任务失败 taskId={} childSessionId={}",
+                                task.getTaskId(), task.getChildSessionId(), cause);
                     }
                     iterator.remove();
                 }

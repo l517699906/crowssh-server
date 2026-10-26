@@ -20,6 +20,15 @@ public interface IDbSessionPort {
     DbQueryResultEntity execute(String handleId, String executionId, String sql,
                                 int maxRows, int queryTimeoutSeconds, boolean autoCommit);
 
+    /**
+     * 在只读 AI 连接上执行已审批的写语句：仅本条语句期间解除只读，结束后恢复；
+     * 恢复失败时结果标记为不可复用，由领域丢弃该连接。
+     */
+    default DbQueryResultEntity executeApprovedAiWrite(String handleId, String executionId, String sql,
+                                                       int maxRows, int queryTimeoutSeconds) {
+        return execute(handleId, executionId, sql, maxRows, queryTimeoutSeconds, true);
+    }
+
     boolean cancel(String handleId, String executionId);
 
     /** 领域确认尚未进入驱动即结束，释放提前到达的取消标记。 */

@@ -77,11 +77,6 @@ public class SqlExecutionPolicy {
                 if (!allColumnsAllowed(analysis.references(), allowedColumns, currentDatabase)) {
                     return deny("查询引用了未授权的数据库列", risk.level(), reasons);
                 }
-                for (String function : analysis.functions()) {
-                    if (!SAFE_FUNCTIONS.contains(function.toUpperCase())) {
-                        return deny("查询包含未验证的函数", risk.level(), reasons);
-                    }
-                }
                 return allow(risk.level(), reasons);
             }
             if (analysis.kind() == SqlStatementKind.DML || analysis.kind() == SqlStatementKind.DDL
@@ -89,6 +84,12 @@ public class SqlExecutionPolicy {
                 if (analysis.hasSubquery()) return deny("含读取子查询的写操作尚未完成来源授权", risk.level(), reasons);
                 if (analysis.requiresExplicitDatabase()) {
                     return deny("AI 写操作必须显式限定数据库", risk.level(), reasons);
+                }
+                if (analysis.unboundedWrite()) {
+                    return deny("AI 不允许执行缺少有效 WHERE 条件的 UPDATE/DELETE", risk.level(), reasons);
+                }
+                if (analysis.destructiveDdl()) {
+                    return deny("AI 不允许执行 DROP/TRUNCATE 等不可逆操作", risk.level(), reasons);
                 }
                 reasons.add("精确 SQL 必须由当前设备单次审批");
                 return new SqlPolicyDecision(SqlPolicyAction.REQUIRE_APPROVAL, risk.level(), reasons);

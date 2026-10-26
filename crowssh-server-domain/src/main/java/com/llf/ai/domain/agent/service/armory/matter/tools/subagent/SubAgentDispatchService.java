@@ -49,22 +49,24 @@ public class SubAgentDispatchService {
                     SshExecuteAdkTool.OWNER_ID_STATE_KEY, context.getUserId(),
                     SshExecuteAdkTool.CONNECTION_ID_STATE_KEY, context.getConnectionId(),
                     SshExecuteAdkTool.TERMINAL_SESSION_ID_STATE_KEY, context.getTerminalSessionId()), childId).blockingGet();
+            SubAgentExecutionScope.register(childId, context, cancelled, scope.toolFailureSignal());
             try {
                 String[] result = {""};
                 runner.runAsync(context.getUserId(), childId, Content.fromParts(Part.fromText(request)),
                                 RunConfig.builder().maxLlmCalls(12).build())
                         .blockingForEach(event -> {
-                            SubAgentExecutionScope.require();
+                            SubAgentExecutionScope.checkActive(cancelled);
                             if (event.finalResponse()) {
                                 String text = event.content().map(Content::text).orElse("");
                                 if (!text.isBlank()) result[0] = bounded(text);
                             }
                         });
-                SubAgentExecutionScope.require();
+                SubAgentExecutionScope.checkActive(cancelled);
                 if (scope.toolFailed()) throw new IllegalStateException("子任务工具执行失败，不能判定业务成功");
                 if (result[0].isBlank()) throw new IllegalStateException("子 Agent 未返回有效最终结果");
                 return result[0];
             } finally {
+                SubAgentExecutionScope.unregister(childId);
                 // 独立子会话不会进入用户聊天列表，结束后释放内存及上下文。
                 runner.sessionService().deleteSession(agent.name(), context.getUserId(), childId).blockingAwait();
             }

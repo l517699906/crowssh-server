@@ -56,7 +56,8 @@ public class PasswordEncryptor {
     ) {
         this(primaryKeyId, primaryKeyBase64, previousKeys, legacyKeys,
                 allowDevelopmentKey,
-                environment.acceptsProfiles(Profiles.of("prod", "production", "release")));
+                // 开发密钥按白名单放行：staging 等未列出的 profile 一律按生产处理。
+                !environment.acceptsProfiles(Profiles.of("dev", "test", "local")));
     }
 
     PasswordEncryptor(

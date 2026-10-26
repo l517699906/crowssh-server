@@ -603,6 +603,7 @@ public class DbSessionService implements IDbSessionService, IDbSessionReaper {
             final String sql;
             final ISqlAnalysisPort.Analysis analysis;
             final int timeout;
+            final boolean approvedWrite;
             synchronized (lifecycleLock) {
                 synchronized (session) {
                     requireAiTurn(binding);
@@ -624,6 +625,7 @@ public class DbSessionService implements IDbSessionService, IDbSessionReaper {
                         endAiTurn(binding);
                         return copyExecution(execution);
                     }
+                    approvedWrite = decision.action() == SqlPolicyAction.REQUIRE_APPROVAL;
                     execution.setState(DbExecutionState.RUNNING);
                     execution.setStartedAt(now());
                     timeout = Math.min(properties.getQuery().getHardQueryTimeoutSeconds(), configuration.getQueryTimeout());
@@ -632,8 +634,11 @@ public class DbSessionService implements IDbSessionService, IDbSessionReaper {
             DbQueryResultEntity result;
             com.llf.ai.domain.db.model.valobj.DbExecutionOutcome outcome;
             try {
-                var raw = sessionPort.execute(lease.handleId(), executionId, sql,
-                        Math.min(50, properties.getAi().getMaxResultRows()), timeout, true);
+                int aiRows = Math.min(50, properties.getAi().getMaxResultRows());
+                // AI 连接默认只读；只有消费了审批票据的写语句才临时解除。
+                var raw = approvedWrite
+                        ? sessionPort.executeApprovedAiWrite(lease.handleId(), executionId, sql, aiRows, timeout)
+                        : sessionPort.execute(lease.handleId(), executionId, sql, aiRows, timeout, true);
                 boolean outcomeKnown = raw != null && raw.isSessionReusable();
                 reusable = outcomeKnown && raw.isAutoCommit() && "IDLE".equals(raw.getTransactionState());
                 outcome = !outcomeKnown ? com.llf.ai.domain.db.model.valobj.DbExecutionOutcome.OUTCOME_UNKNOWN

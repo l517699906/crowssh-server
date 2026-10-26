@@ -92,9 +92,25 @@ public class DbOutboundPolicy {
                     return true;
                 }
             }
+            // NAT64（64:ff9b::/96）与 6to4（2002::/16）内嵌 IPv4，按内嵌地址判定。
+            if (isPrefix(b, new int[]{0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0})) return embedded(b, 12);
+            if ((b[0] & 0xff) == 0x20 && (b[1] & 0xff) == 0x02) return embedded(b, 2);
             return (b[0] & 0xfe) == 0xfc || (b[0] & 0xff) == 0xfe && (b[1] & 0xc0) == 0x80;
         }
         return true;
+    }
+
+    private boolean isPrefix(byte[] bytes, int[] prefix) {
+        for (int i = 0; i < prefix.length; i++) if ((bytes[i] & 0xff) != prefix[i]) return false;
+        return true;
+    }
+
+    private boolean embedded(byte[] bytes, int offset) {
+        try {
+            return isRestricted(InetAddress.getByAddress(Arrays.copyOfRange(bytes, offset, offset + 4)));
+        } catch (UnknownHostException e) {
+            return true;
+        }
     }
 
     private boolean isMapped(byte[] bytes) {

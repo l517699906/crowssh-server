@@ -30,8 +30,20 @@ CREATE PROCEDURE crowssh_migrate_db_connection()
 main: BEGIN
     DECLARE table_exists INT DEFAULT 0;
     DECLARE column_exists INT DEFAULT 0;
-    DECLARE column_type_text VARCHAR(255);
     DECLARE sql_text TEXT;
+    DECLARE created_here INT DEFAULT 0;
+    -- 绑定列添加失败时撤销本次刚创建的空表，使库回到未迁移状态，可在排障后直接重跑。
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        IF created_here = 1 THEN
+            DROP TABLE IF EXISTS `db_connection`;
+        END IF;
+        RESIGNAL;
+    END;
+
+    IF DATABASE() IS NULL OR DATABASE() = '' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'STOP: 请先 USE 目标应用数据库';
+    END IF;
 
     SELECT COUNT(*) INTO table_exists FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ssh_connection';
@@ -61,78 +73,47 @@ main: BEGIN
     IF column_exists <> 1 THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'STOP: 缺少 terminal_session_id 基线列';
     END IF;
-    IF table_exists = 0 THEN
-        SET sql_text = 'CREATE TABLE `db_connection` (\n'
-            ' `id` bigint NOT NULL AUTO_INCREMENT,\n'
-            ' `connection_id` varchar(64) NOT NULL,\n'
-            ' `connection_name` varchar(128) NOT NULL,\n'
-            ' `db_type` varchar(20) NOT NULL DEFAULT ''MYSQL'',\n'
-            ' `host` varchar(255) NOT NULL,\n'
-            ' `port` int NOT NULL DEFAULT 3306,\n'
-            ' `username` varchar(128) NOT NULL,\n'
-            ' `password` text,\n'
-            ' `default_database` varchar(64) DEFAULT NULL,\n'
-            ' `ssl_mode` varchar(20) NOT NULL DEFAULT ''VERIFY_IDENTITY'',\n'
-            ' `tls_server_name` varchar(255) DEFAULT NULL,\n'
-            ' `ca_certificate_pem` text DEFAULT NULL,\n'
-            ' `tunnel_ssh_connection_id` varchar(64) DEFAULT NULL,\n'
-            ' `connect_timeout` int NOT NULL DEFAULT 10,\n'
-            ' `query_timeout` int NOT NULL DEFAULT 60,\n'
-            ' `max_rows` int NOT NULL DEFAULT 1000,\n'
-            ' `config_version` bigint NOT NULL DEFAULT 1,\n'
-            ' `ai_data_mode` varchar(20) NOT NULL DEFAULT ''METADATA_ONLY'',\n'
-            ' `ai_allowed_columns` json DEFAULT NULL,\n'
-            ' `status` tinyint NOT NULL DEFAULT 0,\n'
-            ' `user_id` varchar(64) NOT NULL,\n'
-            ' `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,\n'
-            ' `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n'
-            ' `deleted` tinyint NOT NULL DEFAULT 0,\n'
-            ' PRIMARY KEY (`id`), UNIQUE KEY `uk_connection_id` (`connection_id`),\n'
-            ' KEY `idx_user_deleted` (`user_id`,`deleted`),\n'
-            ' KEY `idx_tunnel_connection` (`tunnel_ssh_connection_id`)\n'
-            ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
-        SET @sql_text = sql_text;
-        PREPARE crowssh_stmt FROM @sql_text;
-        EXECUTE crowssh_stmt;
-        DEALLOCATE PREPARE crowssh_stmt;
-    ELSE
-        SELECT COUNT(*) INTO column_exists FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'db_connection' AND COLUMN_NAME = 'config_version';
-        IF column_exists = 0 THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'STOP: 已存在的 db_connection 结构不完整，请人工核对';
-        END IF;
-        SELECT DATA_TYPE INTO column_type_text FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'db_connection' AND COLUMN_NAME = 'config_version';
-        IF LOWER(column_type_text) <> 'bigint' THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'STOP: db_connection.config_version 类型不匹配';
-        END IF;
-    END IF;
+    -- 前置检查已保证 db_connection 与两个绑定列均不存在，以下步骤只走创建路径。
+    SET sql_text = 'CREATE TABLE `db_connection` (\n'
+        ' `id` bigint NOT NULL AUTO_INCREMENT,\n'
+        ' `connection_id` varchar(64) NOT NULL,\n'
+        ' `connection_name` varchar(128) NOT NULL,\n'
+        ' `db_type` varchar(20) NOT NULL DEFAULT ''MYSQL'',\n'
+        ' `host` varchar(255) NOT NULL,\n'
+        ' `port` int NOT NULL DEFAULT 3306,\n'
+        ' `username` varchar(128) NOT NULL,\n'
+        ' `password` text,\n'
+        ' `default_database` varchar(64) DEFAULT NULL,\n'
+        ' `ssl_mode` varchar(20) NOT NULL DEFAULT ''VERIFY_IDENTITY'',\n'
+        ' `tls_server_name` varchar(255) DEFAULT NULL,\n'
+        ' `ca_certificate_pem` text DEFAULT NULL,\n'
+        ' `tunnel_ssh_connection_id` varchar(64) DEFAULT NULL,\n'
+        ' `connect_timeout` int NOT NULL DEFAULT 10,\n'
+        ' `query_timeout` int NOT NULL DEFAULT 60,\n'
+        ' `max_rows` int NOT NULL DEFAULT 1000,\n'
+        ' `config_version` bigint NOT NULL DEFAULT 1,\n'
+        ' `ai_data_mode` varchar(20) NOT NULL DEFAULT ''METADATA_ONLY'',\n'
+        ' `ai_allowed_columns` json DEFAULT NULL,\n'
+        ' `status` tinyint NOT NULL DEFAULT 0,\n'
+        ' `user_id` varchar(64) NOT NULL,\n'
+        ' `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,\n'
+        ' `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n'
+        ' `deleted` tinyint NOT NULL DEFAULT 0,\n'
+        ' PRIMARY KEY (`id`), UNIQUE KEY `uk_connection_id` (`connection_id`),\n'
+        ' KEY `idx_user_deleted` (`user_id`,`deleted`),\n'
+        ' KEY `idx_tunnel_connection` (`tunnel_ssh_connection_id`)\n'
+        ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    SET @sql_text = sql_text;
+    PREPARE crowssh_stmt FROM @sql_text;
+    EXECUTE crowssh_stmt;
+    DEALLOCATE PREPARE crowssh_stmt;
+    SET created_here = 1;
 
-    SELECT COUNT(*) INTO column_exists FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_session' AND COLUMN_NAME = 'db_connection_id';
-    IF column_exists = 0 THEN
-        SET @sql_text = 'ALTER TABLE `chat_session` ADD COLUMN `db_connection_id` varchar(64) DEFAULT NULL COMMENT ''绑定的数据库连接 ID'' AFTER `terminal_session_id`';
-        PREPARE crowssh_stmt FROM @sql_text; EXECUTE crowssh_stmt; DEALLOCATE PREPARE crowssh_stmt;
-    ELSE
-        SELECT DATA_TYPE INTO column_type_text FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_session' AND COLUMN_NAME = 'db_connection_id';
-        IF LOWER(column_type_text) <> 'varchar' THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'STOP: chat_session.db_connection_id 类型不匹配';
-        END IF;
-    END IF;
-
-    SELECT COUNT(*) INTO column_exists FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_session' AND COLUMN_NAME = 'db_session_id';
-    IF column_exists = 0 THEN
-        SET @sql_text = 'ALTER TABLE `chat_session` ADD COLUMN `db_session_id` varchar(64) DEFAULT NULL COMMENT ''绑定的数据库工作台会话 ID'' AFTER `db_connection_id`';
-        PREPARE crowssh_stmt FROM @sql_text; EXECUTE crowssh_stmt; DEALLOCATE PREPARE crowssh_stmt;
-    ELSE
-        SELECT DATA_TYPE INTO column_type_text FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_session' AND COLUMN_NAME = 'db_session_id';
-        IF LOWER(column_type_text) <> 'varchar' THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'STOP: chat_session.db_session_id 类型不匹配';
-        END IF;
-    END IF;
+    -- 两个绑定列在同一条 ALTER 中添加，不会出现只加了一列的中间状态。
+    SET @sql_text = 'ALTER TABLE `chat_session`'
+        ' ADD COLUMN `db_connection_id` varchar(64) DEFAULT NULL COMMENT ''绑定的数据库连接 ID'' AFTER `terminal_session_id`,'
+        ' ADD COLUMN `db_session_id` varchar(64) DEFAULT NULL COMMENT ''绑定的数据库工作台会话 ID'' AFTER `db_connection_id`';
+    PREPARE crowssh_stmt FROM @sql_text; EXECUTE crowssh_stmt; DEALLOCATE PREPARE crowssh_stmt;
 END$$
 
 CALL crowssh_migrate_db_connection()$$
@@ -157,4 +138,4 @@ SELECT INDEX_NAME, COLUMN_NAME
    AND INDEX_NAME IN ('uk_connection_id', 'idx_user_deleted', 'idx_tunnel_connection')
  ORDER BY INDEX_NAME, SEQ_IN_INDEX;
 
--- 若执行中断，先根据上述信息_schema 查询确认实际状态；不要盲目重跑或依赖应用事务回滚。
+-- 若执行中断：过程内失败会撤销本次新建的 db_connection；客户端断开等外部中断仍须先按上述查询确认实际状态。

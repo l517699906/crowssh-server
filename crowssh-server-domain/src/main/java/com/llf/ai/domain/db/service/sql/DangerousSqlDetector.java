@@ -1,6 +1,7 @@
 package com.llf.ai.domain.db.service.sql;
 
 import com.llf.ai.domain.db.adapter.port.ISqlAnalysisPort;
+import com.llf.ai.domain.db.model.valobj.SqlStatementKind;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,17 +19,16 @@ public class DangerousSqlDetector {
             risk = "HIGH";
             reasons.add("语句可能持有或创建数据库锁");
         }
-        String sql = analysis.sql() == null ? "" : analysis.sql().trim().toLowerCase(java.util.Locale.ROOT);
-        if (sql.matches("(?s)(delete|update)\\b.*\\bwhere\\s+(1|true)\\b.*")
-                || sql.matches("(?s)(delete|update)\\b[^;]*$")) {
+        // 影响范围只取自 AST 分析结果，不在这里对 SQL 文本做词法猜测。
+        if (analysis.unboundedWrite()) {
             risk = "HIGH";
             reasons.add("修改语句缺少可靠的影响范围限制");
         }
-        if (sql.startsWith("drop ") || sql.startsWith("truncate ")
-                || sql.startsWith("kill ") || analysis.kind().name().equals("DDL")) {
+        if (analysis.destructiveDdl() || analysis.kind() == SqlStatementKind.DDL
+                || analysis.kind() == SqlStatementKind.ADMIN) {
             risk = "HIGH";
             reasons.add("语句可能产生不可逆或隐式提交影响");
-        } else if (analysis.kind().name().equals("DML") || analysis.kind().name().equals("ADMIN")) {
+        } else if (analysis.kind() == SqlStatementKind.DML) {
             if (!"HIGH".equals(risk)) risk = "MEDIUM";
             reasons.add("写入或管理操作的实际影响需执行后确认");
         }

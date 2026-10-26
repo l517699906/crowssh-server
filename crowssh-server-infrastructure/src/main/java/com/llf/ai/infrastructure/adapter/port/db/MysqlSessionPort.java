@@ -217,20 +217,40 @@ public class MysqlSessionPort implements IDbSessionPort, IDbMetadataPort {
     public void initializeAiSession(String handleId) {
         // 固定双引号/反斜杠及聚合语义，与服务端解析策略一致，不继承控制台设置。
         DbQueryResultEntity configured = executeInternal(handleId, "baseline_" + UUID.randomUUID(),
-                "SET SESSION sql_mode='" + SQL_MODE_BASELINE + "', time_zone='+00:00', autocommit=1", null, 1, 10);
+                "SET SESSION sql_mode='" + SQL_MODE_BASELINE + "', time_zone='+00:00', autocommit=1, transaction_read_only=1",
+                null, 1, 10);
         if (configured.getSafeError() != null || !configured.isSessionReusable()
                 || !configured.isAutoCommit() || !"IDLE".equals(configured.getTransactionState())) {
             throw new IllegalStateException("无法初始化数据库 AI 会话基线");
         }
         DbQueryResultEntity verified = executeInternal(handleId, "baseline_check_" + UUID.randomUUID(),
-                "SELECT @@SESSION.sql_mode, @@SESSION.time_zone, @@SESSION.autocommit", null, 1, 10);
+                "SELECT @@SESSION.sql_mode, @@SESSION.time_zone, @@SESSION.autocommit, @@SESSION.transaction_read_only",
+                null, 1, 10);
         if (verified.getSafeError() != null || !verified.isSessionReusable() || verified.getRows().size() != 1
-                || verified.getRows().get(0).size() != 3) throw new IllegalStateException("无法验证数据库 AI 会话基线");
+                || verified.getRows().get(0).size() != 4) throw new IllegalStateException("无法验证数据库 AI 会话基线");
         List<String> values = verified.getRows().get(0);
+        // 只读是 AST 白名单之外的数据库层兜底，解析差异也不能让未审批语句写入。
         if (!matchesSqlModeBaseline(values.get(0))
-                || !"+00:00".equals(values.get(1)) || !"1".equals(values.get(2))) {
+                || !"+00:00".equals(values.get(1)) || !"1".equals(values.get(2)) || !"1".equals(values.get(3))) {
             throw new IllegalStateException("数据库 AI 会话基线不匹配");
         }
+    }
+
+    @Override
+    public DbQueryResultEntity executeApprovedAiWrite(String handleId, String executionId, String sql,
+                                                      int maxRows, int queryTimeoutSeconds) {
+        DbQueryResultEntity unlocked = executeInternal(handleId, "write_unlock_" + UUID.randomUUID(),
+                "SET SESSION transaction_read_only=0", null, 1, 10);
+        if (unlocked.getSafeError() != null || !unlocked.isSessionReusable()) {
+            unlocked.setSessionReusable(false);
+            return unlocked;
+        }
+        DbQueryResultEntity result = executeInternal(handleId, executionId, sql, null, maxRows, queryTimeoutSeconds);
+        DbQueryResultEntity relocked = executeInternal(handleId, "write_relock_" + UUID.randomUUID(),
+                "SET SESSION transaction_read_only=1", null, 1, 10);
+        // 无法恢复只读的连接不能再交给后续 AI 语句复用。
+        if (relocked.getSafeError() != null || !relocked.isSessionReusable()) result.setSessionReusable(false);
+        return result;
     }
 
     static boolean matchesSqlModeBaseline(String modes) {
@@ -276,6 +296,7 @@ public class MysqlSessionPort implements IDbSessionPort, IDbMetadataPort {
                 }
                 // 流式结果的 JDBC warning 链可能为空；在状态查询覆盖诊断区前读取有界警告码。
                 try (Statement warningQuery = managed.connection.createStatement()) {
+                    // 必须与主语句的 maxRows 一致：不同取值会让驱动先发送 SET SQL_SELECT_LIMIT，从而清空诊断区。
                     warningQuery.setMaxRows(Math.min(maxRows, 5000) + 1);
                     List<String> safeWarnings = new ArrayList<>();
                     try (ResultSet warningRows = warningQuery.executeQuery("SHOW WARNINGS LIMIT 20")) {
@@ -503,12 +524,18 @@ public class MysqlSessionPort implements IDbSessionPort, IDbMetadataPort {
                         if (!truncationReasons.contains("BINARY_LIMIT")) truncationReasons.add("BINARY_LIMIT");
                     }
                 } else value = safeCell(cell);
-                if (value != null && value.getBytes(StandardCharsets.UTF_8).length > maxCellBytes) {
-                    value = truncateUtf8(value, maxCellBytes);
-                    truncated = true;
-                    if (!truncationReasons.contains("CELL_LIMIT")) truncationReasons.add("CELL_LIMIT");
+                if (value != null) {
+                    // 每个单元只编码一次；截断后直接使用截断长度累计结果字节数。
+                    byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+                    int length = encoded.length;
+                    if (length > maxCellBytes) {
+                        length = utf8Boundary(encoded, maxCellBytes);
+                        value = new String(encoded, 0, length, StandardCharsets.UTF_8);
+                        truncated = true;
+                        if (!truncationReasons.contains("CELL_LIMIT")) truncationReasons.add("CELL_LIMIT");
+                    }
+                    bytes += length;
                 }
-                if (value != null) bytes += value.getBytes(StandardCharsets.UTF_8).length;
                 if (bytes > maxResultBytes) {
                     row.add("[OMITTED]");
                     truncated = true;
@@ -552,12 +579,12 @@ public class MysqlSessionPort implements IDbSessionPort, IDbMetadataPort {
         return HexFormat.of().formatHex(bytes, 0, Math.min(bytes.length, Math.max(0, maxBytes / 2)));
     }
 
-    private String truncateUtf8(String value, int maxBytes) {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= maxBytes) return value;
+    /** 不超过 maxBytes 的最大 UTF-8 字符边界。 */
+    private static int utf8Boundary(byte[] bytes, int maxBytes) {
+        if (bytes.length <= maxBytes) return bytes.length;
         int end = maxBytes;
         while (end > 0 && (bytes[end] & 0xC0) == 0x80) end--;
-        return new String(bytes, 0, end, StandardCharsets.UTF_8);
+        return end;
     }
 
     private List<String> warnings(SQLWarning warning) {

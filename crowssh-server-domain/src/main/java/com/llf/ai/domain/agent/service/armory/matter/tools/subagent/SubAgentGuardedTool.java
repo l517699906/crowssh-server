@@ -22,13 +22,27 @@ public final class SubAgentGuardedTool extends BaseTool {
     @Override public Optional<FunctionDeclaration> declaration() { return delegate.declaration(); }
     @Override public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext context) {
         return Single.defer(() -> {
-            var scope = SubAgentExecutionScope.require();
+            var scope = SubAgentExecutionScope.current();
+            boolean ownedScope = false;
+            if (scope == null) {
+                scope = SubAgentExecutionScope.openFor(context);
+                ownedScope = true;
+            }
+            scope = SubAgentExecutionScope.require();
+            final var activeScope = scope;
+            final boolean closeScope = ownedScope;
             return delegate.runAsync(args, context).doOnSuccess(result -> {
-                if ("denied".equals(result.get("status")) || "cancelled".equals(result.get("status"))) scope.cancelPlan();
+                if ("denied".equals(result.get("status")) || "cancelled".equals(result.get("status"))) activeScope.cancelPlan();
                 if (Boolean.FALSE.equals(result.get("success")) || "error".equals(result.get("status")) || "failed".equals(result.get("status"))
                         || "denied".equals(result.get("status")) || "cancelled".equals(result.get("status")))
-                    scope.markToolFailed();
-            }).doOnError(error -> scope.markToolFailed());
+                    activeScope.markToolFailed();
+            }).doOnError(error -> activeScope.markToolFailed())
+                    .doFinally(() -> {
+                        if (closeScope) {
+                            try { activeScope.close(); }
+                            catch (Exception ignored) { /* restore path must not mask tool result */ }
+                        }
+                    });
         });
     }
 }

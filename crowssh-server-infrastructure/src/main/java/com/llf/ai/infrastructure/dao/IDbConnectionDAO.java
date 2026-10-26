@@ -36,8 +36,12 @@ public interface IDbConnectionDAO extends BaseMapper<DbConnectionPO> {
         return update(wrapper);
     }
 
+    /** 逻辑删除并在同一条 UPDATE 中清除密文密码与 CA 证书，已删除行不再保留可用凭据。 */
     default int deleteOwned(String ownerId, String connectionId) {
-        return delete(Wrappers.<DbConnectionPO>lambdaQuery()
+        return update(Wrappers.lambdaUpdate(DbConnectionPO.class)
+                .set(DbConnectionPO::getDeleted, 1)
+                .set(DbConnectionPO::getPassword, null)
+                .set(DbConnectionPO::getCaCertificatePem, null)
                 .eq(DbConnectionPO::getUserId, ownerId)
                 .eq(DbConnectionPO::getConnectionId, connectionId));
     }

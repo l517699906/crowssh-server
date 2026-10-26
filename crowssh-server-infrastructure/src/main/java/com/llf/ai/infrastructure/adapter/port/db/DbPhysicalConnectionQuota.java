@@ -56,9 +56,10 @@ public final class DbPhysicalConnectionQuota {
             synchronized (DbPhysicalConnectionQuota.this) {
                 if (closed) return;
                 closed = true;
-                totals.compute(kind, (ignored, count) -> count - 1);
+                totals.computeIfPresent(kind, (ignored, count) -> count - 1);
                 Map<Kind, Integer> counts = owners.get(ownerId);
-                counts.compute(kind, (ignored, count) -> count == 1 ? null : count - 1);
+                if (counts == null) return;
+                counts.computeIfPresent(kind, (ignored, count) -> count == 1 ? null : count - 1);
                 if (counts.isEmpty()) owners.remove(ownerId);
             }
         }

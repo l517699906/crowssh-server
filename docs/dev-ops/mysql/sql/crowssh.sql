@@ -1,12 +1,12 @@
-# CrowSSH MySQL schema (MySQL 8.0+)
+# CrowSSH MySQL schema (MySQL 8.0.32+)
+# 仅用于全新环境初始化。脚本不删除任何表：对已有库执行会在第一个 CREATE TABLE 处报错停止，
+# 已有部署请使用 ../migration/ 下的增量迁移。
 # The application defaults to the `crowssh` database. Select another database
 # explicitly when applying this dump against a customized JDBC URL.
 
 CREATE DATABASE IF NOT EXISTS `crowssh`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 USE `crowssh`;
-
-DROP TABLE IF EXISTS `device_principal`;
 
 CREATE TABLE `device_principal` (
                                     `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -22,8 +22,6 @@ CREATE TABLE `device_principal` (
 
 # 转储表 chat_message
 # ------------------------------------------------------------
-
-DROP TABLE IF EXISTS `chat_message`;
 
 CREATE TABLE `chat_message` (
                                 `id` bigint NOT NULL AUTO_INCREMENT,
@@ -44,8 +42,6 @@ CREATE TABLE `chat_message` (
 # 转储表 chat_milestone
 # ------------------------------------------------------------
 
-DROP TABLE IF EXISTS `chat_milestone`;
-
 CREATE TABLE `chat_milestone` (
                                   `id` bigint NOT NULL AUTO_INCREMENT,
                                   `session_id` varchar(64) NOT NULL COMMENT '会话ID',
@@ -60,8 +56,6 @@ CREATE TABLE `chat_milestone` (
 
 # 转储表 chat_session
 # ------------------------------------------------------------
-
-DROP TABLE IF EXISTS `chat_session`;
 
 CREATE TABLE `chat_session` (
                                 `id` varchar(64) NOT NULL COMMENT '会话ID',
@@ -82,8 +76,6 @@ CREATE TABLE `chat_session` (
 
 # 转储表 db_connection
 # ------------------------------------------------------------
-
-DROP TABLE IF EXISTS `db_connection`;
 
 CREATE TABLE `db_connection` (
                                 `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -121,8 +113,6 @@ CREATE TABLE `db_connection` (
 # 转储表 core_memory
 # ------------------------------------------------------------
 
-DROP TABLE IF EXISTS `core_memory`;
-
 CREATE TABLE `core_memory` (
                                `id` bigint NOT NULL AUTO_INCREMENT,
                                `user_id` varchar(64) NOT NULL DEFAULT 'default' COMMENT '用户ID',
@@ -147,8 +137,6 @@ CREATE TABLE `core_memory` (
 # 转储表 long_term_memory
 # ------------------------------------------------------------
 
-DROP TABLE IF EXISTS `long_term_memory`;
-
 CREATE TABLE `long_term_memory` (
                                     `id` bigint NOT NULL AUTO_INCREMENT,
                                     `user_id` varchar(64) NOT NULL COMMENT '用户ID',
@@ -171,8 +159,6 @@ CREATE TABLE `long_term_memory` (
 
 # 转储表 ssh_connection
 # ------------------------------------------------------------
-
-DROP TABLE IF EXISTS `ssh_connection`;
 
 CREATE TABLE `ssh_connection` (
                                   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -202,8 +188,6 @@ CREATE TABLE `ssh_connection` (
 # 转储表 ssh_connection_config
 # ------------------------------------------------------------
 
-DROP TABLE IF EXISTS `ssh_connection_config`;
-
 CREATE TABLE `ssh_connection_config` (
                                          `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
                                          `connection_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '关联的连接ID',
@@ -222,8 +206,6 @@ CREATE TABLE `ssh_connection_config` (
 
 # 转储表 ssh_session_log
 # ------------------------------------------------------------
-
-DROP TABLE IF EXISTS `ssh_session_log`;
 
 CREATE TABLE `ssh_session_log` (
                                    `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
